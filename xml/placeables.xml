@@ -1,0 +1,6 @@
+<placeables>
+	<specializations>
+		<specialization name="npcManager" className="PlaceableNPCManager" filename="src/placeables/specializations/PlaceableNPCManager.lua"/>
+		<specialization name="npcNavigation" className="PlaceableNPCNavigation" filename="src/placeables/specializations/PlaceableNPCNavigation.lua"/>
+	</specializations>
+</placeables>

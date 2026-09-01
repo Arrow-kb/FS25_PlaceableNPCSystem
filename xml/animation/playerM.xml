@@ -1,0 +1,124 @@
+﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<conditionalAnimation>
+	<item id="idle">
+		<clips>
+			<clip clipName="idle1Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+				<condition parameter="isSitting" equal="false"/>
+				<condition parameter="rotationVelocity" between="-0.01, 0.01"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="idleRotateLeft">
+		<clips speedScaleType="angular" speedScaleParameter="1.1">
+			<clip clipName="turnInplaceLeft90Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+				<condition parameter="isSitting" equal="false"/>
+				<condition parameter="rotationVelocity" greater="0.01"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="idleRotateRight">
+		<clips speedScaleType="angular" speedScaleParameter="1.1">
+			<clip clipName="turnInplaceRight90Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+				<condition parameter="isSitting" equal="false"/>
+				<condition parameter="rotationVelocity" lower="-0.01"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="walkFwd" entryTransitionDuration="0.25" exitTransitionDuration="0.25">
+		<clips speedScaleType="distance" speedScaleParameter="1">
+			<clip clipName="NPCWalkMale01Source"/>
+			<clip clipName="NPCWalkMale02Source"/>
+			<clip clipName="NPCWalkMale03Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isStrafeWalkMode" equal="false"/>
+				<condition parameter="isWalking" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+			</conditionGroup>
+			<conditionGroup>
+				<condition parameter="isStrafeWalkMode" equal="true"/>
+				<condition parameter="isWalking" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+				<condition parameter="movementDirZ" greater="0.05"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="runFwd" entryTransitionDuration="0.25" exitTransitionDuration="0.25">
+		<clips speedScaleType="distance" speedScaleParameter="2.7">
+			<clip clipName="runFwd1Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isRunning" equal="true"/>
+				<condition parameter="isCrouching" equal="false"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="crouchIdle">
+		<clips>
+			<clip clipName="crouchIdleSource"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isCrouching" equal="true"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="crouchFwd">
+		<clips speedScaleType="distance" speedScaleParameter="2.6">
+			<clip clipName="crouchFwdSource"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isWalking" equal="true"/>
+				<condition parameter="isCrouching" equal="true"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="talking">
+		<clips>
+			<clip clipName="NPCTalkingMale01Source"/>
+			<clip clipName="NPCTalkingMale02Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isTalking" equal="true"/>
+				<condition parameter="isWalking" equal="false"/>
+				<condition parameter="isCrouching" equal="false"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+	<item id="sitting">
+		<clips>
+			<!-- <clip clipName="NPCMaleSittingIdle01Source"/>
+			<clip clipName="NPCMaleSittingIdle02Source"/> -->
+			<clip clipName="NPCMalesitttingIdle03Source"/>
+		</clips>
+		<conditions>
+			<conditionGroup>
+				<condition parameter="isIdling" equal="true"/>
+				<condition parameter="isSitting" equal="true"/>
+				<condition parameter="isWalking" equal="false"/>
+				<condition parameter="isCrouching" equal="false"/>
+			</conditionGroup>
+		</conditions>
+	</item>
+</conditionalAnimation>
