@@ -217,7 +217,9 @@ function PlaceableNPCNavigation:getNPCSpawnPoint(spawnGroupName)
     local target = targets[name]
     target.occupied = true
 
-    return target.x, target.y, target.z, target.ry
+    local x, z = self:intIndexToPoint(target.x, target.z)
+
+    return x, target.y, z, target.ry
 
 end
 
@@ -232,9 +234,23 @@ function PlaceableNPCNavigation:onUpdate(dt)
     local job = spec.queue[uniqueId]
     local start, target = job.start, job.target
 
-    local path = self:getPath(start.x, start.y, start.z, target.x, target.y, target.z)
+    local indexPath = self:getPath(start.x, start.y, start.z, target.x, target.y, target.z)
+    local path = {}
 
-    job.callback(job.owner, path, job.ry, job.node)
+    if indexPath ~= nil then
+
+        for _, point in pairs(indexPath) do
+            local x, z = self:intIndexToPoint(point.x, point.z)
+            table.insert(path, {
+                ["x"] = x,
+                ["y"] = point.y,
+                ["z"] = z
+            })
+        end
+
+    end
+
+    job.callback(job.owner, indexPath ~= nil and path or nil, job.ry, job.node)
 
     spec.queue[uniqueId] = nil
 
@@ -284,6 +300,7 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner
     self:setTargetOccupied(name, true)
 
     local queueId = Utils.getUniqueId(target, spec.queue, "navigationQueue", 32)
+    local tx, tz = self:intIndexToPoint(target.x, target.z)
 
     spec.queue[queueId] = {
         ["start"] = {
@@ -292,9 +309,9 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner
             ["z"] = z
         },
         ["target"] = {
-            ["x"] = target.x,
+            ["x"] = tx,
             ["y"] = target.y,
-            ["z"] = target.z
+            ["z"] = tz
         },
         ["callback"] = callback,
         ["owner"] = owner,
@@ -355,6 +372,9 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
 
     local currentRoom = self:getRoomForPoint(sx, sy, sz)
     local targetRoom = self:getRoomForPoint(tx, ty, tz)
+
+    sx, sz = self:pointToIntIndex(sx, sz)
+    tx, tz = self:pointToIntIndex(tx, tz)
 
     if currentRoom == targetRoom then return self:findPath(sx, sy, sz, tx, ty, tz) end
 
@@ -461,19 +481,18 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
 
                 local z = p1.z
 
-                for x = p1.x + (p1.x > p2.x and -cellSize or cellSize), p2.x + (p2.x > p1.x and -cellSize or cellSize), p1.x > p2.x and -cellSize or cellSize do
+                for x = p1.x + (p1.x > p2.x and -1 or 1), p2.x + (p2.x > p1.x and -1 or 1), p1.x > p2.x and -1 or 1 do
                     
-                    x = roundNumber(x, 4)
                     local row1, row2 = l1.rows[x], l2.rows[x]
 
-                    if (row1 == nil or row1.columns[z] == nil) and (row2 == nil or row2.columns[z] == nil) then
+                    if (row1 == nil or row1[z] == nil) and (row2 == nil or row2[z] == nil) then
 
                         hasLine = false
 
                         for y, point in pairs(requiredLevels) do
                             if point[1] ~= x then continue end
                             local row3 = levels[y].rows[x]
-                            hasLine = row3 ~= nil and row3.columns[z] ~= nil and row3.columns[z]
+                            hasLine = row3 ~= nil and row3[z] ~= nil and row3[z]
                             break
                         end
 
@@ -504,12 +523,10 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
             elseif p1.x == p2.x then
 
                 local x = p1.x
-                local columns1 = l1.rows[x].columns
-                local columns2 = l2.rows[x] ~= nil and l2.rows[x].columns or nil
+                local columns1 = l1.rows[x]
+                local columns2 = l2.rows[x] ~= nil and l2.rows[x] or nil
 
-                for z = p1.z + (p1.z > p2.z and -cellSize or cellSize), p2.z + (p2.z > p1.z and -cellSize or cellSize), p1.z > p2.z and -cellSize or cellSize do
-
-                    z = roundNumber(z, 4)
+                for z = p1.z + (p1.z > p2.z and -1 or 1), p2.z + (p2.z > p1.z and -1 or 1), p1.z > p2.z and -1 or 1 do
 
                     if columns1[z] == nil and (columns2 == nil or columns2[z] == nil) then
 
@@ -518,7 +535,7 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
                         for y, point in pairs(requiredLevels) do
                             if point[2] ~= z then continue end
                             local row1 = levels[y].rows[x]
-                            hasLine = row1 ~= nil and row1.columns[z] ~= nil and row1.columns[z]
+                            hasLine = row1 ~= nil and row1[z] ~= nil and row1[z]
                             break
                         end
 
@@ -706,18 +723,15 @@ end
 
 function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
 
-    -- === DEBUG ===
-    --local time1 = getTimeSec() * 1000
-    -- =============
-
+    --print("===", string.format("1) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
 	sx, sy, sz = self:getClosestPoint(sx, sy, sz)
 
 	if sx == nil or sy == nil or sz == nil then return end
+    --print(string.format("2) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
 	tx, ty, tz = self:getClosestPoint(tx, ty, tz)
 
 	if tx == nil or ty == nil or tz == nil then return end
-
-    local distance = MathUtil.vector3Length(tx - sx, ty - sy, tz - sz)
+    --print(string.format("3) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
 
     local spec = self[specName]
 
@@ -750,8 +764,7 @@ function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
 
 	end
 
-    local cellSize = spec.cellSize
-	local path = PathUtil.findPath(sx, sy, sz, tx, ty, tz, spec.levels, cellSize)
+	local path = PathUtil.findPath(sx, sy, sz, tx, ty, tz, spec.levels, self)
 
     if path == nil then return nil end
         
@@ -768,7 +781,7 @@ function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
 
         if p1.x == p2.x and p1.x == p3.x and p1.y == p2.y and p1.y == p3.y then
             
-            if roundNumber(math.abs(p2.z - p1.z), 4) == cellSize and roundNumber(math.abs(p3.z - p1.z) / numSinceCorner, 4) == cellSize then
+            if math.abs(p2.z - p1.z) == 1 and math.abs(p3.z - p1.z) / numSinceCorner == 1 then
                 table.remove(path, i)
                 lastCorner = lastCorner - 1
                 numSinceCorner = numSinceCorner + 1
@@ -779,7 +792,7 @@ function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
 
         if p1.z == p2.z and p1.z == p3.z and p1.y == p2.y and p1.y == p3.y then
             
-            if roundNumber(math.abs(p2.x - p1.x), 4) == cellSize and roundNumber(math.abs(p3.x - p1.x) / numSinceCorner, 4) == cellSize then
+            if math.abs(p2.x - p1.x) == 1 and math.abs(p3.x - p1.x) / numSinceCorner == 1 then
                 table.remove(path, i)
                 lastCorner = lastCorner - 1
                 numSinceCorner = numSinceCorner + 1
@@ -806,14 +819,7 @@ function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
     spec.debugTestPath.path = path
     table.insert(spec.cache, cache)
 
-    -- === DEBUG ===
     print(string.format("added to cache (%d)", #spec.cache))
-    --local time2 = getTimeSec() * 1000
-    --table.insert(spec.debugTimer, {
-        --["distance"] = distance,
-        --["time"] = time2 - time1
-    --})
-    -- =============
 
     return path
 
@@ -822,65 +828,33 @@ end
 
 function PlaceableNPCNavigation:branchToClosestPoint(level, x, z)
 
-    --local c1, c2 = AuctionMartNavigationController.CELL_SIZE, AuctionMartNavigationController.CELL_SIZE / 2
-    local c1 = self[specName].cellSize
-
     if level.rows[x] ~= nil then
 
         local row = level.rows[x]
         
-        for h = 0, c1 * 2, c1 do
+        for h = 0, 2, 1 do
         
-            if row.columns[z - h] ~= nil then return x, z - h end
-            if row.columns[z + h] ~= nil then return x, z + h end
+            if row[z - h] ~= nil then return x, z - h end
+            if row[z + h] ~= nil then return x, z + h end
 
         end
 
     end
 
-    --if level.rows[x - c2] ~= nil then
-
-        --local row = level.rows[x - c2]
-        
-        --for h = 0, c1 * 2, c2 do
-        
-            --if row.columns[z - h] ~= nil then return x - c2, z - h end
-            --if row.columns[z + h] ~= nil then return x - c2, z + h end
-
-        --end
-
-    --end
-
-    --if level.rows[x + c2] ~= nil then
-
-        --local row = level.rows[x + c2]
-        
-        --for h = 0, c1 * 2, c2 do
-        
-            --if row.columns[z - h] ~= nil then return x + c2, z - h end
-            --if row.columns[z + h] ~= nil then return x + c2, z + h end
-
-        --end
-
-    --end
-
-    --for w = 0, c1 * 2, c2 do
-    --for w = 0, c1 * 2, c2 do
-    for w = 0, c1 * 2, c1 do
+    for w = 0, 2, 1 do
         
         local row1, row2 = level.rows[x - w], level.rows[x + w]
 
-        --for h = 0, c1 * 2, c2 do
-        for h = 0, c1 * 2, c1 do
+        for h = 0, 2, 1 do
 
-            if row1 ~= nil and row1.columns[z] ~= nil then return x - w, z end
-            if row2 ~= nil and row2.columns[z] ~= nil then return x + w, z end
+            if row1 ~= nil and row1[z] ~= nil then return x - w, z end
+            if row2 ~= nil and row2[z] ~= nil then return x + w, z end
 
-            if row1 ~= nil and row1.columns[z - h] ~= nil then return x - w, z - h end
-            if row2 ~= nil and row2.columns[z - h] ~= nil then return x + w, z - h end
+            if row1 ~= nil and row1[z - h] ~= nil then return x - w, z - h end
+            if row2 ~= nil and row2[z - h] ~= nil then return x + w, z - h end
 
-            if row1 ~= nil and row1.columns[z + h] ~= nil then return x - w, z + h end
-            if row2 ~= nil and row2.columns[z + h] ~= nil then return x + w, z + h end
+            if row1 ~= nil and row1[z + h] ~= nil then return x - w, z + h end
+            if row2 ~= nil and row2[z + h] ~= nil then return x + w, z + h end
 
         end
 
@@ -896,23 +870,25 @@ function PlaceableNPCNavigation:getClosestPoint(x, y, z)
 
     for ly, level in pairs(levels) do
 
-        local nx = self:normalizeCoordinate(x, ly, "x")
-	    local nz = self:normalizeCoordinate(z, ly, "z")
         local distance = math.abs(y - ly)
 
         if (closest == nil or closest.distance > distance) then
 
-            if level.rows[nx] == nil or level.rows[nx].columns[nz] == nil then
-                nx, nz = self:branchToClosestPoint(level, nx, nz)
+            local x1, z1
+
+            if level.rows[x] == nil or level.rows[x][z] == nil then
+                x1, z1 = self:branchToClosestPoint(level, x, z)
+            else
+                x1, z1 = x, z
             end
 
-            if nx == nil or nz == nil then continue end
+            if x1 == nil or z1 == nil then continue end
 
             closest = {
                 ["distance"] = distance,
-                ["x"] = nx,
+                ["x"] = x1,
                 ["y"] = ly,
-                ["z"] = nz
+                ["z"] = z1
             }
 
         end
@@ -941,17 +917,18 @@ end
 
 function PlaceableNPCNavigation:blockArea(x1, z1, x2, z2, y)
 
+    x1, z1 = self:pointToIntIndex(x1, z1)
+    x2, z2 = self:pointToIntIndex(x2, z2)
+
     x1, y, z1 = self:getClosestPoint(x1, y, z1)
     x2, _, z2 = self:getClosestPoint(x2, y, z2)
 
     local level = self[specName].levels[y]
-    local cellSize = self[specName].cellSize
 
-    for x = x1, x2, cellSize do
-        for z = z1, z2, cellSize do
-            local rx, rz = roundNumber(x, 4), roundNumber(z, 4)
-            if level.rows[rx] == nil or level.rows[rx].columns[rz] == nil then continue end
-            level.rows[rx].columns[rz] = false
+    for x = x1, x2, 1 do
+        for z = z1, z2, 1 do
+            if level.rows[x] == nil or level.rows[x][z] == nil then continue end
+            level.rows[x][z] = false
         end
     end
 
@@ -1049,7 +1026,9 @@ function PlaceableNPCNavigation:fillMesh()
     for _, point in pairs(perimeter) do
         
         if levels[point.y] == nil then
-            levels[point.y] = { ["rows"] = {}, ["lx"] = point.x, ["lz"] = point.z, ["hx"] = point.x, ["hz"] = point.z }
+            local r, g, b = math.random(), math.random(), math.random()
+            levels[point.y] = { ["rows"] = {}, ["lx"] = point.x, ["lz"] = point.z, ["hx"] = point.x, ["hz"] = point.z, ["colour"] = { r, g, b } }
+            if spec.oy == nil or point.y < spec.oy then spec.oy = point.y end
         end
 
         local level = levels[point.y]
@@ -1069,6 +1048,7 @@ function PlaceableNPCNavigation:fillMesh()
     local cellSize = spec.cellSize
     spec.nx, spec.nz = lx % cellSize, lz % cellSize
     spec.ox, spec.oz = math.floor(lx / cellSize) * cellSize, math.floor(lz / cellSize) * cellSize
+    local ox, oz = spec.ox, spec.oz
 
     for y, level in pairs(levels) do
 
@@ -1076,14 +1056,15 @@ function PlaceableNPCNavigation:fillMesh()
 
         for x = level.lx - cellSize, level.hx + cellSize, cellSize do
 
-            local ix = math.floor((x - spec.ox) / cellSize + 0.5)
+            local ix = math.floor((x - ox) / cellSize + 0.5)
+            local px = ox + ix * cellSize
             local columns
 
             for z = level.lz - cellSize, level.hz + cellSize, cellSize do
 
-                if not self:getIsPointInsideMesh(x, y, z) then continue end
+                local iz = math.floor((z - oz) / cellSize + 0.5)
 
-                local iz = math.floor((z - spec.oz) / cellSize + 0.5)
+                if not self:getIsPointInsideMesh(px, y, oz + iz * cellSize) then continue end
 
                 if columns == nil then columns = {} end
 
@@ -1100,6 +1081,7 @@ function PlaceableNPCNavigation:fillMesh()
     end
 
     spec.levels = levels
+    self:finishLoadingNavigationMesh()
 
 end
 
@@ -1124,86 +1106,6 @@ function PlaceableNPCNavigation:intIndexToPoint(ix, iz)
 end
 
 
-function PlaceableNPCNavigation:fillMeshOld()
-
-    local levels = {}
-    local lx, lz, hx, hz
-    local spec = self[specName]
-    local perimeter = spec.perimeter
-    local requiredlevels, completedLevels = 0, 0
-
-    for _, point in pairs(perimeter) do
-        
-        if levels[point.y] == nil then
-            levels[point.y] = { ["rows"] = {}, ["numRows"] = 0 }
-            requiredlevels = requiredlevels + 1
-        end
-
-        if lx == nil or point.x < lx then lx = roundNumber(point.x, 4) end
-        if lz == nil or point.z < lz then lz = roundNumber(point.z, 4) end
-        if hx == nil or point.x > hx then hx = roundNumber(point.x, 4) end
-        if hz == nil or point.z > hz then hz = roundNumber(point.z, 4) end
-
-    end
-
-    local cellSize = spec.cellSize
-    spec.nx, spec.nz = lx % cellSize, lz % cellSize
-
-    for y, level in pairs(levels) do
-
-        g_asyncTaskManager:addSubtask(function()
-
-            local ry = roundNumber(y, 4)
-            
-            for x = lx, hx, cellSize do
-
-                local row1 = { ["columns"] = {}, ["numColumns"] = 0 }
-                --local row2 = { ["columns"] = {}, ["numColumns"] = 0 }
-
-                local rx1 = roundNumber(x, 4)
-                --local rx2 = roundNumber(x + cellSize / 2, 4)
-                
-                for z = lz, hz, cellSize do
-
-                    local rz1 = roundNumber(z, 4)
-                    --local rz2 = roundNumber(z + cellSize / 2, 4)
-                    
-                    if self:getIsPointInsideMesh(rx1, ry, rz1) then
-                        row1.columns[rz1] = true
-                        row1.numColumns = row1.numColumns + 1
-                    end
-                    
-                    --if rx2 < navigation.hx and rz2 < navigation.hz and self:getIsPointInsideMesh(rx2, ry, rz2) then
-                        --row2.columns[rz2] = { true }
-                        --row2.numColumns = row2.numColumns + 1
-                    --end
-
-                end
-
-                if row1.numColumns > 0 then
-                    level.rows[rx1] = row1
-                    level.numRows = level.numRows + 1
-                end
-
-                --if row2.numColumns > 0 then
-                    --level.rows[rx2] = row2
-                    --level.numRows = level.numRows + 1
-                --end
-
-            end
-
-            completedLevels = completedLevels + 1
-            if completedLevels == requiredlevels then self:finishLoadingNavigationMesh() end
-
-        end, string.format(" - filling navigation mesh for level %.2f", y))
-
-    end
-
-    spec.levels = levels
-
-end
-
-
 function PlaceableNPCNavigation:finishLoadingNavigationMesh()
 
     local spec = self[specName]
@@ -1213,7 +1115,8 @@ function PlaceableNPCNavigation:finishLoadingNavigationMesh()
         local x, y, z = getWorldTranslation(target.node)
         local dx, _, dz = localDirectionToWorld(target.node, 0, 0, 1)
 
-        target.x, target.y, target.z = x, y, z
+        target.x, target.z = self:pointToIntIndex(x, z)
+        target.y = y
         target.ry = math.atan2(dx, dz)
 
     end
@@ -1271,156 +1174,29 @@ function PlaceableNPCNavigation:getIsPointInsidePolygon(x, z, polygon)
 end
 
 
-function PlaceableNPCNavigation:visualiseNavigationOld()
-
-    local spec = self[specName]
-
-    for i, point in pairs(spec.perimeter) do
-
-		local nextPoint = spec.perimeter[i + 1] or spec.perimeter[1]
-		--drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 0, 1, 0, false)
-
-	end
-
-    for _, hole in pairs(spec.holes) do
-
-        for i, point in pairs(hole) do
-
-		    local nextPoint = hole[i + 1] or hole[1]
-		    --drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 1, 0, 0, false)
-
-        end
-
-	end
-
-	for y, level in pairs(spec.levels) do
-        
-        for x, row in pairs(level.rows) do
-            
-            for z, point in pairs(row.columns) do
-                
-                if point then drawDebugPoint(x, y, z, 0, 1, 0, 1, true) end
-                --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%.3f %.3f %.3f", x, y, z), 1.5, 0.5, 1, 3, 2)
-
-            end
-
-        end
-
-    end
-
-    if spec.debugTestPath ~= nil then
-
-        local sx, sy, sz = spec.debugTestPath.sx, spec.debugTestPath.sy, spec.debugTestPath.sz
-        local tx, ty, tz = spec.debugTestPath.tx, spec.debugTestPath.ty, spec.debugTestPath.tz
-        
-        DebugFlag.renderAtPosition(sx, sy, sz, nil, nil, nil, "start", 1, 0.5)
-        DebugFlag.renderAtPosition(tx, ty, tz, nil, nil, nil, "end", 1, 0.5)
-
-        if spec.debugTestPath.path ~= nil then
-            for i, point in pairs(spec.debugTestPath.path) do
-
-                if i == #spec.debugTestPath.path then break end
-                local next = spec.debugTestPath.path[i + 1]
-                drawDebugLine(point.x, point.y + 0.01, point.z, 0, 0, 1, next.x, next.y + 0.01, next.z, 0, 0, 1, true)
-                --DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, string.format("%d) %.4f %.4f %.4f", i, point.x, point.y, point.z), 1, 0.5, nil, 2, 3)
-        
-                --if i == math.floor(#self.debugTestPath.path / 2) then DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, tostring((self.debugTestPath.cost or 1) - 1), 1, 0.5) end
-
-            end
-        end
-
-    end
-
-    for name, target in pairs(spec.targets) do
-        
-        --DebugFlag.renderAtPosition(target.x, target.y, target.z, nil, nil, nil, string.format("%s (%.2f %.2f %.2f) (%.2fr %.0fr)", name, target.x, target.y, target.z, target.ry, math.deg(target.ry)), 1, 0.5, nil, 2, 3)
-
-    end
-
-    if #spec.debugTimer > 0 then
-
-        if spec.debugOverlay == nil then
-            _, spec.debugOffsetY = getNormalizedScreenValues(20, 20)
-            spec.debugOverlay = g_overlayManager:createOverlay("gui.serverDetails", 0.3, 0.05, 0.2, 0.55)
-            spec.debugOverlay:setAlignment(Overlay.ALIGN_VERTICAL_TOP, Overlay.ALIGN_HORIZONTAL_LEFT)
-            spec.debugOverlay:setColor(0, 0, 0, 0.75)
-            spec.debugOverlay:setPosition(0.4, 0.9)
-        end
-
-        spec.debugOverlay:render()
-	
-        setTextColor(1, 0, 0, 1)
-        setTextAlignment(RenderText.ALIGN_LEFT)
-        setTextBold(true)
-        
-        renderText(0.425, 0.85, spec.debugOffsetY / 2, "Distance")
-        renderText(0.475, 0.85, spec.debugOffsetY / 2, "Time")
-
-        setTextColor(1, 1, 1, 1)
-        setTextBold(false)
-
-        local y = 0.835
-
-        table.sort(spec.debugTimer, function(a, b)
-
-            if a.time == b.time then return a.distance > b.distance end
-        
-            return a.time > b.time
-        
-        end)
-
-        local totalDistance, totalTime = 0, 0
-
-        for i, profile in pairs(spec.debugTimer) do
-
-            if i <= 20 then
-                renderText(0.425, y, spec.debugOffsetY / 2, string.format("%.4f", profile.distance))
-                renderText(0.475, y, spec.debugOffsetY / 2, string.format("%.6f ms", profile.time))
-                y = y - spec.debugOffsetY
-            end
-
-            totalDistance, totalTime = totalDistance + profile.distance, totalTime + profile.time
-
-        end
-
-        setTextColor(1, 0, 0, 1)
-        setTextBold(true)
-
-        renderText(0.425, y - spec.debugOffsetY, spec.debugOffsetY / 2, "Average Distance")
-        renderText(0.475, y - spec.debugOffsetY, spec.debugOffsetY / 2, "Average Time")
-
-        setTextColor(1, 1, 1, 1)
-        setTextBold(false)
-
-        renderText(0.425, y - spec.debugOffsetY * 2, spec.debugOffsetY / 2, string.format("%.4f", totalDistance / #spec.debugTimer))
-        renderText(0.475, y - spec.debugOffsetY * 2, spec.debugOffsetY / 2, string.format("%.6f ms", totalTime / #spec.debugTimer))
-
-    end
-
-end
-
-
 function PlaceableNPCNavigation:visualiseNavigation()
 
     local spec = self[specName]
 
-    for i, point in pairs(spec.perimeter) do
+    --for i, point in pairs(spec.perimeter) do
 
-		local nextPoint = spec.perimeter[i + 1] or spec.perimeter[1]
+		--local nextPoint = spec.perimeter[i + 1] or spec.perimeter[1]
 		--drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 0, 1, 0, false)
 
-	end
+	--end
 
-    for _, hole in pairs(spec.holes) do
+    --for _, hole in pairs(spec.holes) do
 
-        for i, point in pairs(hole) do
+        --for i, point in pairs(hole) do
 
-		    local nextPoint = hole[i + 1] or hole[1]
+		    --local nextPoint = hole[i + 1] or hole[1]
 		    --drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 1, 0, 0, false)
 
-        end
+        --end
 
-	end
+	--end
+
+    --drawDebugPoint(spec.ox, spec.oy, spec.oz, 1, 0, 0, 1, true)
 
 	for y, level in pairs(spec.levels) do
         
@@ -1430,11 +1206,20 @@ function PlaceableNPCNavigation:visualiseNavigation()
                 
                 local x, z = self:intIndexToPoint(ix, iz)
                 if point then drawDebugPoint(x, y, z, 0, 1, 0, 1, true) end
-                --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%.3f %.3f %.3f", x, y, z), 1.5, 0.5, 1, 3, 2)
+                --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%d %.3f %d", ix, y, iz), 1.5, 0.5, 1, 2, 2)
 
             end
 
         end
+
+        local r, g, b = level.colour[1], level.colour[2], level.colour[3]
+
+        drawDebugLine(level.lx, y, level.lz, r, g, b, level.hx, y, level.lz, r, g, b, true)
+        drawDebugLine(level.hx, y, level.lz, r, g, b, level.hx, y, level.hz, r, g, b, true)
+        drawDebugLine(level.hx, y, level.hz, r, g, b, level.lx, y, level.hz, r, g, b, true)
+        drawDebugLine(level.lx, y, level.hz, r, g, b, level.lx, y, level.lz, r, g, b, true)
+        --DebugFlag.renderAtPosition(level.lx, y, level.lz, nil, nil, nil, string.format("lx=%.4f y=%.4f lz=%.4f", level.lx, y, level.lz), 1.5, 0.5, 1, 2, 2)
+        --DebugFlag.renderAtPosition(level.hx, y, level.hz, nil, nil, nil, string.format("hx=%.4f y=%.4f hz=%.4f", level.hx, y, level.hz), 1.5, 0.5, 1, 2, 2)
 
     end
 
@@ -1442,6 +1227,9 @@ function PlaceableNPCNavigation:visualiseNavigation()
 
         local sx, sy, sz = spec.debugTestPath.sx, spec.debugTestPath.sy, spec.debugTestPath.sz
         local tx, ty, tz = spec.debugTestPath.tx, spec.debugTestPath.ty, spec.debugTestPath.tz
+
+        sx, sz = self:intIndexToPoint(sx, sz)
+        tx, tz = self:intIndexToPoint(tx, tz)
         
         DebugFlag.renderAtPosition(sx, sy, sz, nil, nil, nil, "start", 1, 0.5)
         DebugFlag.renderAtPosition(tx, ty, tz, nil, nil, nil, "end", 1, 0.5)
@@ -1451,7 +1239,9 @@ function PlaceableNPCNavigation:visualiseNavigation()
 
                 if i == #spec.debugTestPath.path then break end
                 local next = spec.debugTestPath.path[i + 1]
-                drawDebugLine(point.x, point.y + 0.01, point.z, 0, 0, 1, next.x, next.y + 0.01, next.z, 0, 0, 1, true)
+                local x1, z1 = self:intIndexToPoint(point.x, point.z)
+                local x2, z2 = self:intIndexToPoint(next.x, next.z)
+                drawDebugLine(x1, point.y + 0.01, z1, 0, 0, 1, x2, next.y + 0.01, z2, 0, 0, 1, true)
                 --DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, string.format("%d) %.4f %.4f %.4f", i, point.x, point.y, point.z), 1, 0.5, nil, 2, 3)
         
                 --if i == math.floor(#self.debugTestPath.path / 2) then DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, tostring((self.debugTestPath.cost or 1) - 1), 1, 0.5) end
@@ -1461,11 +1251,11 @@ function PlaceableNPCNavigation:visualiseNavigation()
 
     end
 
-    for name, target in pairs(spec.targets) do
+    --for name, target in pairs(spec.targets) do
         
         --DebugFlag.renderAtPosition(target.x, target.y, target.z, nil, nil, nil, string.format("%s (%.2f %.2f %.2f) (%.2fr %.0fr)", name, target.x, target.y, target.z, target.ry, math.deg(target.ry)), 1, 0.5, nil, 2, 3)
 
-    end
+    --end
 
     if #spec.debugTimer > 0 then
 
