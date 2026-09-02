@@ -48,10 +48,13 @@ function PlaceableNPCNavigation.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "getPath", PlaceableNPCNavigation.getPath)
 	SpecializationUtil.registerFunction(placeable, "getPathByType", PlaceableNPCNavigation.getPathByType)
 	SpecializationUtil.registerFunction(placeable, "getRoomForPoint", PlaceableNPCNavigation.getRoomForPoint)
+	SpecializationUtil.registerFunction(placeable, "intIndexToPoint", PlaceableNPCNavigation.intIndexToPoint)
 	SpecializationUtil.registerFunction(placeable, "setTargetOccupied", PlaceableNPCNavigation.setTargetOccupied)
 	SpecializationUtil.registerFunction(placeable, "getTargetNodeByName", PlaceableNPCNavigation.getTargetNodeByName)
 	SpecializationUtil.registerFunction(placeable, "normalizeCoordinate", PlaceableNPCNavigation.normalizeCoordinate)
+	SpecializationUtil.registerFunction(placeable, "pointToIntIndex", PlaceableNPCNavigation.pointToIntIndex)
 	SpecializationUtil.registerFunction(placeable, "preloadPaths", PlaceableNPCNavigation.preloadPaths)
+	SpecializationUtil.registerFunction(placeable, "removeQueueRequest", PlaceableNPCNavigation.removeQueueRequest)
 	SpecializationUtil.registerFunction(placeable, "visualiseNavigation", PlaceableNPCNavigation.visualiseNavigation)
 end
 
@@ -71,6 +74,8 @@ function PlaceableNPCNavigation:onFinalizePlacement()
 
     self:raiseActive()
 
+    spec.uniqueIdToQueueOrder = {}
+    spec.queue = {}
     spec.debugTimer = {}
     spec.perimeter = {}
     spec.holes = {}
@@ -127,11 +132,11 @@ function PlaceableNPCNavigation:onFinalizePlacement()
     
     self:createPathTargets(xmlFile, "placeable.npcNavigation.targets")
 
-    g_asyncTaskManager:addTask(function()
+    --g_asyncTaskManager:addTask(function()
     
         self:createNavigationMesh()
 
-    end, " - Load Placeable Navigation Mesh")
+    --end, " - Load Placeable Navigation Mesh")
 
     addConsoleCommand("debugPathfinding", "Debug pathfinding", "consoleCommandFindPath", self)
 
@@ -220,12 +225,44 @@ end
 function PlaceableNPCNavigation:onUpdate(dt)
 
     local spec = self[specName]
+
+    if #spec.uniqueIdToQueueOrder == 0 then return end
+
+    local uniqueId = table.remove(spec.uniqueIdToQueueOrder, 1)
+    local job = spec.queue[uniqueId]
+    local start, target = job.start, job.target
+
+    local path = self:getPath(start.x, start.y, start.z, target.x, target.y, target.z)
+
+    job.callback(job.owner, path, job.ry, job.node)
+
+    spec.queue[uniqueId] = nil
+
     self:raiseActive()
 
 end
 
 
-function PlaceableNPCNavigation:getPathByType(pathType, x, y, z)
+function PlaceableNPCNavigation:removeQueueRequest(uniqueId)
+
+    local spec = self[specName]
+
+    for i, id in pairs(spec.uniqueIdToQueueOrder) do
+        if id == uniqueId then
+            table.remove(spec.uniqueIdToQueueOrder, i)
+            break
+        end
+    end
+
+    local node = spec.queue[uniqueId].node
+    self:setTargetOccupied(getName(node), false)
+
+    spec.queue[uniqueId] = nil
+
+end
+
+
+function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner)
 
     local spec = self[specName]
     local group = spec.groups[pathType]
@@ -248,7 +285,27 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z)
 
     local queueId = Utils.getUniqueId(target, spec.queue, "navigationQueue", 32)
 
-    return self:getPath(x, y, z, target.x, target.y, target.z), target.ry, target.node
+    spec.queue[queueId] = {
+        ["start"] = {
+            ["x"] = x,
+            ["y"] = y,
+            ["z"] = z
+        },
+        ["target"] = {
+            ["x"] = target.x,
+            ["y"] = target.y,
+            ["z"] = target.z
+        },
+        ["callback"] = callback,
+        ["owner"] = owner,
+        ["ry"] = target.ry,
+        ["node"] = target.node
+    }
+    table.insert(spec.uniqueIdToQueueOrder, queueId)
+
+    self:raiseActive()
+
+    return queueId
 
 end
 
@@ -984,6 +1041,91 @@ end
 
 function PlaceableNPCNavigation:fillMesh()
 
+    local spec = self[specName]
+    local levels = {}
+    local perimeter = spec.perimeter
+    local lx, lz, hx, hz
+
+    for _, point in pairs(perimeter) do
+        
+        if levels[point.y] == nil then
+            levels[point.y] = { ["rows"] = {}, ["lx"] = point.x, ["lz"] = point.z, ["hx"] = point.x, ["hz"] = point.z }
+        end
+
+        local level = levels[point.y]
+
+        if lx == nil or point.x < lx then lx = point.x end
+        if lz == nil or point.z < lz then lz = point.z end
+        if hx == nil or point.x > hx then hx = point.x end
+        if hz == nil or point.z > hz then hz = point.z end
+
+        if point.x < level.lx then level.lx = point.x end
+        if point.z < level.lz then level.lz = point.z end
+        if point.x > level.hx then level.hx = point.x end
+        if point.z > level.hz then level.hz = point.z end
+
+    end
+
+    local cellSize = spec.cellSize
+    spec.nx, spec.nz = lx % cellSize, lz % cellSize
+    spec.ox, spec.oz = math.floor(lx / cellSize) * cellSize, math.floor(lz / cellSize) * cellSize
+
+    for y, level in pairs(levels) do
+
+        local rows = level.rows
+
+        for x = level.lx - cellSize, level.hx + cellSize, cellSize do
+
+            local ix = math.floor((x - spec.ox) / cellSize + 0.5)
+            local columns
+
+            for z = level.lz - cellSize, level.hz + cellSize, cellSize do
+
+                if not self:getIsPointInsideMesh(x, y, z) then continue end
+
+                local iz = math.floor((z - spec.oz) / cellSize + 0.5)
+
+                if columns == nil then columns = {} end
+
+                columns[iz] = true
+
+            end
+
+            if columns == nil then continue end
+
+            rows[ix] = columns
+
+        end
+
+    end
+
+    spec.levels = levels
+
+end
+
+
+function PlaceableNPCNavigation:pointToIntIndex(x, z)
+
+    local spec = self[specName]
+    local cellSize = spec.cellSize
+
+    return math.floor((x - spec.ox) / cellSize + 0.5), math.floor((z - spec.oz) / cellSize + 0.5)
+
+end
+
+
+function PlaceableNPCNavigation:intIndexToPoint(ix, iz)
+
+    local spec = self[specName]
+    local cellSize = spec.cellSize
+
+    return spec.ox + ix * cellSize, spec.oz + iz * cellSize
+
+end
+
+
+function PlaceableNPCNavigation:fillMeshOld()
+
     local levels = {}
     local lx, lz, hx, hz
     local spec = self[specName]
@@ -1129,7 +1271,7 @@ function PlaceableNPCNavigation:getIsPointInsidePolygon(x, z, polygon)
 end
 
 
-function PlaceableNPCNavigation:visualiseNavigation()
+function PlaceableNPCNavigation:visualiseNavigationOld()
 
     local spec = self[specName]
 
@@ -1157,6 +1299,136 @@ function PlaceableNPCNavigation:visualiseNavigation()
             
             for z, point in pairs(row.columns) do
                 
+                if point then drawDebugPoint(x, y, z, 0, 1, 0, 1, true) end
+                --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%.3f %.3f %.3f", x, y, z), 1.5, 0.5, 1, 3, 2)
+
+            end
+
+        end
+
+    end
+
+    if spec.debugTestPath ~= nil then
+
+        local sx, sy, sz = spec.debugTestPath.sx, spec.debugTestPath.sy, spec.debugTestPath.sz
+        local tx, ty, tz = spec.debugTestPath.tx, spec.debugTestPath.ty, spec.debugTestPath.tz
+        
+        DebugFlag.renderAtPosition(sx, sy, sz, nil, nil, nil, "start", 1, 0.5)
+        DebugFlag.renderAtPosition(tx, ty, tz, nil, nil, nil, "end", 1, 0.5)
+
+        if spec.debugTestPath.path ~= nil then
+            for i, point in pairs(spec.debugTestPath.path) do
+
+                if i == #spec.debugTestPath.path then break end
+                local next = spec.debugTestPath.path[i + 1]
+                drawDebugLine(point.x, point.y + 0.01, point.z, 0, 0, 1, next.x, next.y + 0.01, next.z, 0, 0, 1, true)
+                --DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, string.format("%d) %.4f %.4f %.4f", i, point.x, point.y, point.z), 1, 0.5, nil, 2, 3)
+        
+                --if i == math.floor(#self.debugTestPath.path / 2) then DebugFlag.renderAtPosition(point.x, point.y, point.z, nil, nil, nil, tostring((self.debugTestPath.cost or 1) - 1), 1, 0.5) end
+
+            end
+        end
+
+    end
+
+    for name, target in pairs(spec.targets) do
+        
+        --DebugFlag.renderAtPosition(target.x, target.y, target.z, nil, nil, nil, string.format("%s (%.2f %.2f %.2f) (%.2fr %.0fr)", name, target.x, target.y, target.z, target.ry, math.deg(target.ry)), 1, 0.5, nil, 2, 3)
+
+    end
+
+    if #spec.debugTimer > 0 then
+
+        if spec.debugOverlay == nil then
+            _, spec.debugOffsetY = getNormalizedScreenValues(20, 20)
+            spec.debugOverlay = g_overlayManager:createOverlay("gui.serverDetails", 0.3, 0.05, 0.2, 0.55)
+            spec.debugOverlay:setAlignment(Overlay.ALIGN_VERTICAL_TOP, Overlay.ALIGN_HORIZONTAL_LEFT)
+            spec.debugOverlay:setColor(0, 0, 0, 0.75)
+            spec.debugOverlay:setPosition(0.4, 0.9)
+        end
+
+        spec.debugOverlay:render()
+	
+        setTextColor(1, 0, 0, 1)
+        setTextAlignment(RenderText.ALIGN_LEFT)
+        setTextBold(true)
+        
+        renderText(0.425, 0.85, spec.debugOffsetY / 2, "Distance")
+        renderText(0.475, 0.85, spec.debugOffsetY / 2, "Time")
+
+        setTextColor(1, 1, 1, 1)
+        setTextBold(false)
+
+        local y = 0.835
+
+        table.sort(spec.debugTimer, function(a, b)
+
+            if a.time == b.time then return a.distance > b.distance end
+        
+            return a.time > b.time
+        
+        end)
+
+        local totalDistance, totalTime = 0, 0
+
+        for i, profile in pairs(spec.debugTimer) do
+
+            if i <= 20 then
+                renderText(0.425, y, spec.debugOffsetY / 2, string.format("%.4f", profile.distance))
+                renderText(0.475, y, spec.debugOffsetY / 2, string.format("%.6f ms", profile.time))
+                y = y - spec.debugOffsetY
+            end
+
+            totalDistance, totalTime = totalDistance + profile.distance, totalTime + profile.time
+
+        end
+
+        setTextColor(1, 0, 0, 1)
+        setTextBold(true)
+
+        renderText(0.425, y - spec.debugOffsetY, spec.debugOffsetY / 2, "Average Distance")
+        renderText(0.475, y - spec.debugOffsetY, spec.debugOffsetY / 2, "Average Time")
+
+        setTextColor(1, 1, 1, 1)
+        setTextBold(false)
+
+        renderText(0.425, y - spec.debugOffsetY * 2, spec.debugOffsetY / 2, string.format("%.4f", totalDistance / #spec.debugTimer))
+        renderText(0.475, y - spec.debugOffsetY * 2, spec.debugOffsetY / 2, string.format("%.6f ms", totalTime / #spec.debugTimer))
+
+    end
+
+end
+
+
+function PlaceableNPCNavigation:visualiseNavigation()
+
+    local spec = self[specName]
+
+    for i, point in pairs(spec.perimeter) do
+
+		local nextPoint = spec.perimeter[i + 1] or spec.perimeter[1]
+		--drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 0, 1, 0, false)
+
+	end
+
+    for _, hole in pairs(spec.holes) do
+
+        for i, point in pairs(hole) do
+
+		    local nextPoint = hole[i + 1] or hole[1]
+		    --drawDebugLine(point.x, point.y, point.z, 0, 1, 0, nextPoint.x, nextPoint.y, nextPoint.z, 1, 0, 0, false)
+
+        end
+
+	end
+
+	for y, level in pairs(spec.levels) do
+        
+        for ix, columns in pairs(level.rows) do
+            
+            for iz, point in pairs(columns) do
+                
+                local x, z = self:intIndexToPoint(ix, iz)
                 if point then drawDebugPoint(x, y, z, 0, 1, 0, 1, true) end
                 --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%.3f %.3f %.3f", x, y, z), 1.5, 0.5, 1, 3, 2)
 

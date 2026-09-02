@@ -85,10 +85,10 @@ end
 function PlaceableNPC:saveToXMLFile(xmlFile, key)
 
 	if self.name ~= nil then xmlFile:setValue(key .. "#name", self.name) end
-	xmlFile:setValue(key .. "#class", self.class)
+	xmlFile:setValue(key .. "#class", self.className)
 	xmlFile:setValue(key .. "#uniqueId", self.uniqueId)
-	xmlFile:setValue(key .. "#position", table.pack(self.x, self.y, self.z))
-	xmlFile:setValue(key .. "#rotation", table.pack(self.rx, self.ry, self.rz))
+	xmlFile:setValue(key .. "#position", self.x, self.y, self.z)
+	xmlFile:setValue(key .. "#rotation", self.rx, self.ry, self.rz)
 	xmlFile:setValue(key .. "#gender", self.gender)
 	xmlFile:setValue(key .. "#preset", self.preset)
 	xmlFile:setValue(key .. ".state#isIdle", self.isIdle)
@@ -105,7 +105,7 @@ function PlaceableNPC:saveToXMLFile(xmlFile, key)
 		xmlFile:setValue(key .. ".path#endDirection", path.endDirection or path.direction)
 		
 		for i, point in pairs(path.path) do
-			xmlFile:setValue(string.format("%s.path.point(%d)", key, i - 1), table.pack(point.x, point.y, point.z))
+			xmlFile:setValue(string.format("%s.path.point(%d)", key, i - 1), point.x, point.y, point.z)
 		end
 
 	end
@@ -129,8 +129,8 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 
 	self.name = xmlFile:getValue(key .. "#name", nil)
 	self.uniqueId = xmlFile:getValue(key .. "#uniqueId")
-	self.x, self.y, self.z = table.unpack(xmlFile:getValue(key .. "#position"))
-	self.rx, self.ry, self.rz = table.unpack(xmlFile:getValue(key .. "#rotation"))
+	self.x, self.y, self.z = xmlFile:getValue(key .. "#position")
+	self.rx, self.ry, self.rz = xmlFile:getValue(key .. "#rotation")
 	self.gender = xmlFile:getValue(key .. "#gender")
 	self.preset = xmlFile:getValue(key .. "#preset")
 	self.isIdle = xmlFile:getValue(key .. ".state#isIdle", false)
@@ -149,7 +149,7 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 		local path = {}
 
 		xmlFile:iterate(key .. ".path.point", function(_, pointKey)
-			local x, y, z = table.unpack(xmlFile:getValue(pointKey))
+			local x, y, z = xmlFile:getValue(pointKey)
 			table.insert(path, { ["x"] = x, ["y"] = y, ["z"] = z })
 		end)
 
@@ -381,9 +381,52 @@ function PlaceableNPC:findTask()
 end
 
 
-function PlaceableNPC:setTask(path, endDirection, node, type, targetTime)
+function PlaceableNPC:onPathFound(path, endDirection, node)
+
+	if path == nil then
+		self.taskQueueRequest = nil
+		self.pendingTask = nil
+		return
+	end
+
+	local task = self.pendingTask
+
+	if task == nil then return end
 
 	self:setPath(path, endDirection)
+	self:setTask(node, task.type, task.targetTime)
+	self.pendingTask = nil
+	self.taskQueueRequest = nil
+
+end
+
+
+function PlaceableNPC:getPathByType(taskType, targetTime)
+
+	local taskRequestId = self.owner:getPathByType(taskType, self.x, self.y, self.z, self.onPathFound, self)
+
+	if taskRequestId == nil then return false end
+
+	self.taskRequestId = taskRequestId
+	self:setPendingTask(taskType, targetTime)
+
+	return true
+
+end
+
+
+function PlaceableNPC:setPendingTask(taskType, targetTime)
+
+	self.pendingTask = {
+		["type"] = taskType,
+		["targetTime"] = targetTime
+	}
+
+end
+
+
+function PlaceableNPC:setTask(node, type, targetTime)
+
 	self.task = {
 		["name"] = getName(node),
 		["node"] = node,
@@ -466,7 +509,7 @@ function PlaceableNPC:update(dT)
 
 	end
 
-	if self.isIdle and not self.isTurning and task == nil then
+	if self.isIdle and not self.isTurning and task == nil and self.taskQueueRequest == nil then
 		self:findTask()
 	end
 
