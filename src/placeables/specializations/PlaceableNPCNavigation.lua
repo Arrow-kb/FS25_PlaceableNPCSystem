@@ -33,7 +33,6 @@ end
 
 
 function PlaceableNPCNavigation.registerFunctions(placeable)
-	SpecializationUtil.registerFunction(placeable, "blockArea", PlaceableNPCNavigation.blockArea)
 	SpecializationUtil.registerFunction(placeable, "branchToClosestPoint", PlaceableNPCNavigation.branchToClosestPoint)
 	SpecializationUtil.registerFunction(placeable, "consoleCommandFindPath", PlaceableNPCNavigation.consoleCommandFindPath)
 	SpecializationUtil.registerFunction(placeable, "createNavigationMesh", PlaceableNPCNavigation.createNavigationMesh)
@@ -55,6 +54,7 @@ function PlaceableNPCNavigation.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "pointToIntIndex", PlaceableNPCNavigation.pointToIntIndex)
 	SpecializationUtil.registerFunction(placeable, "preloadPaths", PlaceableNPCNavigation.preloadPaths)
 	SpecializationUtil.registerFunction(placeable, "removeQueueRequest", PlaceableNPCNavigation.removeQueueRequest)
+	SpecializationUtil.registerFunction(placeable, "setAreaBlocked", PlaceableNPCNavigation.setAreaBlocked)
 	SpecializationUtil.registerFunction(placeable, "visualiseNavigation", PlaceableNPCNavigation.visualiseNavigation)
 end
 
@@ -215,11 +215,10 @@ function PlaceableNPCNavigation:getNPCSpawnPoint(spawnGroupName)
 
     local name = validTargets[math.random(#validTargets)]
     local target = targets[name]
-    target.occupied = true
 
     local x, z = self:intIndexToPoint(target.x, target.z)
 
-    return x, target.y, z, target.ry
+    return x, target.y, z, target.ry, name
 
 end
 
@@ -282,20 +281,29 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner
 
     local spec = self[specName]
     local group = spec.groups[pathType]
-
-    if group == nil then return nil end
-
-    local validTargets = {}
     local targets = spec.targets
+    local target, name
 
-    for _, name in pairs(group) do
-        if not targets[name].occupied then table.insert(validTargets, name) end
+    if group == nil then
+        target = targets[pathType]
+        if target == nil or target.occupied then return nil end
+        name = pathType
     end
 
-    if #validTargets == 0 then return nil end
+    if target == nil then
 
-    local name = validTargets[math.random(#validTargets)]
-    local target = targets[name]
+        local validTargets = {}
+
+        for _, name in pairs(group) do
+            if not targets[name].occupied then table.insert(validTargets, name) end
+        end
+
+        if #validTargets == 0 then return nil end
+
+        name = validTargets[math.random(#validTargets)]
+        target = targets[name]
+
+    end
     
     self:setTargetOccupied(name, true)
 
@@ -376,7 +384,12 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
     sx, sz = self:pointToIntIndex(sx, sz)
     tx, tz = self:pointToIntIndex(tx, tz)
 
-    if currentRoom == targetRoom then return self:findPath(sx, sy, sz, tx, ty, tz) end
+    if currentRoom == targetRoom then
+        local path = self:findPath(sx, sy, sz, tx, ty, tz)
+        if path == nil then return nil end
+        table.insert(path, { ["x"] = tx, ["y"] = ty, ["z"] = tz })
+        return path
+    end
 
     local spec = self[specName]
     local rooms = spec.rooms
@@ -510,7 +523,8 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
                     
                     for y, point in pairs(requiredLevels) do
                         if point[1] ~= p3.x then continue end
-                        p3.x, p3.z = point[1], p1.z
+                        local row = levels[y].rows[point[1]]
+                        if row ~= nil and row[p1.z] then p3.x, p3.z = point[1], p1.z end
                         requiredLevels[y] = nil
                         hasChanged = true
                         break
@@ -554,7 +568,8 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
                     
                     for y, point in pairs(requiredLevels) do
                         if point[2] ~= p3.z then continue end
-                        p3.x, p3.z = p1.x, point[2]
+                        local row = levels[y].rows[p1.x]
+                        if row ~= nil and row[point[2]] then p3.x, p3.z = p1.x, point[2] end
                         requiredLevels[y] = nil
                         hasChanged = true
                         break
@@ -687,7 +702,6 @@ function PlaceableNPCNavigation:getPath(sx, sy, sz, tx, ty, tz)
 
     table.insert(fullPath, { ["x"] = tx, ["y"] = ty, ["z"] = tz })
 
-
     spec.debugTestPath = {
         ["sx"] = osx,
         ["sy"] = osy,
@@ -723,15 +737,13 @@ end
 
 function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
 
-    --print("===", string.format("1) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
 	sx, sy, sz = self:getClosestPoint(sx, sy, sz)
 
 	if sx == nil or sy == nil or sz == nil then return end
-    --print(string.format("2) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
+
 	tx, ty, tz = self:getClosestPoint(tx, ty, tz)
 
 	if tx == nil or ty == nil or tz == nil then return end
-    --print(string.format("3) %s %s %s => %s %s %s", sx, sy, sz, tx, ty, tz))
 
     local spec = self[specName]
 
@@ -915,7 +927,7 @@ function PlaceableNPCNavigation:normalizeCoordinate(i, y, coordType)
 end
 
 
-function PlaceableNPCNavigation:blockArea(x1, z1, x2, z2, y)
+function PlaceableNPCNavigation:setAreaBlocked(x1, z1, x2, z2, y, isBlocked)
 
     x1, z1 = self:pointToIntIndex(x1, z1)
     x2, z2 = self:pointToIntIndex(x2, z2)
@@ -928,7 +940,7 @@ function PlaceableNPCNavigation:blockArea(x1, z1, x2, z2, y)
     for x = x1, x2, 1 do
         for z = z1, z2, 1 do
             if level.rows[x] == nil or level.rows[x][z] == nil then continue end
-            level.rows[x][z] = false
+            level.rows[x][z] = not isBlocked
         end
     end
 
@@ -1205,7 +1217,7 @@ function PlaceableNPCNavigation:visualiseNavigation()
             for iz, point in pairs(columns) do
                 
                 local x, z = self:intIndexToPoint(ix, iz)
-                if point then drawDebugPoint(x, y, z, 0, 1, 0, 1, true) end
+                if point then drawDebugPoint(x, y + 0.025, z, 0, 1, 0, 1, true) end
                 --DebugFlag.renderAtPosition(x, y, z, nil, nil, nil, string.format("%d %.3f %d", ix, y, iz), 1.5, 0.5, 1, 2, 2)
 
             end
@@ -1325,3 +1337,15 @@ function PlaceableNPCNavigation:consoleCommandFindPath()
     self:createNPC("BIDDER")
 
 end
+
+
+function PlaceableNPCNavigation.visualise()
+
+    for _, placeable in pairs(g_currentMission.placeableSystem.placeables) do
+        if placeable.visualiseNavigation ~= nil then placeable:visualiseNavigation() end
+    end
+
+end
+
+
+g_placeableNPCSystemProfiler:addClass(PlaceableNPCNavigation)

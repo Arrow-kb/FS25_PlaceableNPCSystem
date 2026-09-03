@@ -1,4 +1,5 @@
 local files = {
+    "src/debug/Profiler.lua",
 	"src/placeables/PlaceableSpecLoader.lua",
     "src/graphics/NPCGraphicsComponent.lua",
     "src/graphics/NPCGraphicsComponentState.lua",
@@ -6,6 +7,11 @@ local files = {
 	"src/npcs/PlaceableNPC.lua",
     "src/spawners/NPCSpawn.lua",
     "src/spawners/NPCSpawnCar.lua",
+    "src/tasks/NPCTask.lua",
+    "src/tasks/NPCTaskSit.lua",
+    "src/tasks/NPCTaskToggleDoors.lua",
+    "src/tasks/NPCTaskToggleLights.lua",
+	"src/utils/ClassUtil.lua",
 	"src/utils/PathUtil.lua"
 }
 

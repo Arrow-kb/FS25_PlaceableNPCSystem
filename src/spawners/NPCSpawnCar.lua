@@ -1,10 +1,7 @@
 NPCSpawnCar = {}
 
 
-local NPCSpawnCar_mt = Class(NPCSpawnCar)
-
-
-PlaceableNPCManager.registerSpawnClass(NPCSpawnCar)
+local NPCSpawnCar_mt = Class(NPCSpawnCar, NPCSpawn)
 
 
 function NPCSpawnCar.registerXMLPaths(schema, basePath) end
@@ -13,7 +10,7 @@ function NPCSpawnCar.registerXMLPaths(schema, basePath) end
 function NPCSpawnCar.registerSavegameXMLPaths(schema, basePath)
     schema:register(XMLValueType.BOOL, basePath .. "#isFacingFront", "NPC spawn car is facing front")
     schema:register(XMLValueType.VECTOR_3, basePath .. "#colour", "NPC spawn car colour")
-    schema:register(XMLValueType.INT, basePath .. "#id", "NPC spawn car vehicle id")
+    schema:register(XMLValueType.INT, basePath .. "#vehicleId", "NPC spawn car vehicle id")
 end
 
 
@@ -22,6 +19,21 @@ function NPCSpawnCar.new()
     local self = NPCSpawn.new(NPCSpawnCar_mt)
 
     return self
+
+end
+
+
+function NPCSpawnCar:delete(placeable)
+
+    NPCSpawnCar:superClass().delete(self, placeable)
+
+    local x1, z1, x2, z2 = self:getArea()
+    placeable:setAreaBlocked(x1, z1, x2, z2, self.y, false)
+
+    if self.vehicleNode ~= nil then
+        removeFromPhysics(self.vehicleNode)
+        delete(self.vehicleNode)
+    end
 
 end
 
@@ -90,7 +102,7 @@ function NPCSpawnCar:saveToXMLFile(xmlFile, key)
 
     xmlFile:setValue(key .. "#isFacingFront", self.isFacingFront)
     xmlFile:setValue(key .. "#vehicleId", self.vehicleId)
-    xmlFile:setValue(key .. "#colour", self.colour)
+    xmlFile:setValue(key .. "#colour", table.unpack(self.colour))
 
 end
 
@@ -101,20 +113,23 @@ function NPCSpawnCar:loadFromXMLFile(xmlFile, key)
 
     self.isFacingFront = xmlFile:getValue(key .. "#isFacingFront")
     self.vehicleId = xmlFile:getValue(key .. "#vehicleId")
-    self.colour = xmlFile:getValue(key .. "#colour")
+    self.colour = table.pack(xmlFile:getValue(key .. "#colour"))
 
 end
 
 
-function NPCSpawnCar:load(x, y, z, ry, placeable, group)
+function NPCSpawnCar:load(placeable)
 
-    self.x, self.y, self.z, self.isFacingFront = x, y, z, math.random() >= 0.5
-    self.ry = self.isFacingFront and ry or (math.pi - math.rad(math.deg(ry) + 180))
-    self.vehicleId = math.random(#group.vehicles)
+    NPCSpawnCar:superClass().load(self, placeable)
+
+    local group = placeable:getSpawnGroupByName(self:getGroupName())
+
+    self.isFacingFront = self.isFacingFront == nil and math.random() >= 0.5 or self.isFacingFront or false
+    self.vehicleId = self.vehicleId or math.random(#group.vehicles)
 
     self:loadCar(group.vehicles[self.vehicleId])
     local x1, z1, x2, z2 = self:getArea()
-    placeable:blockArea(x1, z1, x2, z2, y)
+    placeable:setAreaBlocked(x1, z1, x2, z2, self.y, true)
 
 end
 
@@ -122,6 +137,7 @@ end
 function NPCSpawnCar:loadCar(vehicleData)
 
     local sx, sy, sz = self.x, self.y, self.z
+    local ry = self.isFacingFront and self.ry or (math.pi - math.rad(math.deg(self.ry) + 180))
 
     local rootNode = clone(vehicleData.rootNode, false)
     local driverNode = I3DUtil.indexToObject(rootNode, vehicleData.driverNodePath)
@@ -137,7 +153,7 @@ function NPCSpawnCar:loadCar(vehicleData)
     end
 
     link(getRootNode(), rootNode)
-    setWorldRotation(rootNode, 0, self.ry, 0)
+    setWorldRotation(rootNode, 0, ry, 0)
     setWorldTranslation(rootNode, sx, sy, sz)
 
     setTranslation(collisionNode1, 0, 0, self.isFacingFront and vehicleData.maxDepth or vehicleData.minDepth)
@@ -156,6 +172,7 @@ function NPCSpawnCar:loadCar(vehicleData)
     end
 
     setVisibility(rootNode, true)
+    self.vehicleNode = rootNode
 
     local driverX, _, driverZ = getWorldTranslation(driverNode)
     delete(driverNode)
@@ -165,3 +182,6 @@ function NPCSpawnCar:loadCar(vehicleData)
     end
 
 end
+
+
+PlaceableNPCManager.registerSpawnClass(NPCSpawnCar)

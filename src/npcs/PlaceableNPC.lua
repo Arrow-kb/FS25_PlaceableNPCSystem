@@ -2,8 +2,6 @@ PlaceableNPC = {}
 
 local PlaceableNPC_mt = Class(PlaceableNPC)
 
-PlaceableNPCManager.registerNPCClass(PlaceableNPC)
-
 g_xmlManager:addCreateSchemaFunction(function()
 	PlaceableNPC.xmlSchema = XMLSchema.new("auctionNPC")
 end)
@@ -72,9 +70,13 @@ end
 
 function PlaceableNPC:delete()
 
-	self.owner:registerUnloadedNPC(self)
+	self.owner:registerDeletedNPC(self)
+
+	if self.task ~= nil then self.task:delete() end
 
 	if self.node ~= nil and self.node ~= 0 then removeFromPhysics(self.node) end
+	
+	self.spawn:delete(self.owner)
 	self.speechBubble:delete()
 	self.playerGraphics:delete()
 	g_i3DManager:releaseSharedI3DFile(self.sharedLoadRequestId)
@@ -95,7 +97,7 @@ function PlaceableNPC:saveToXMLFile(xmlFile, key)
 	xmlFile:setValue(key .. ".state#isTurning", self.isTurning)
 	xmlFile:setValue(key .. ".state#turnTarget", self.turnTarget)
 
-	local task, path = self.task, self.path
+	local path = self.path
 
 	if path ~= nil then
 
@@ -110,17 +112,10 @@ function PlaceableNPC:saveToXMLFile(xmlFile, key)
 
 	end
 
-	if task ~= nil then
-
-		xmlFile:setValue(key .. ".task#type", task.type)
-		xmlFile:setValue(key .. ".task#time", task.time)
-		xmlFile:setValue(key .. ".task#targetTime", task.targetTime)
-		xmlFile:setValue(key .. ".task#node", task.name)
-		xmlFile:setValue(key .. ".task#started", task.started)
-
-	end
+	if self.task ~= nil then self.task:saveToXMLFile(xmlFile, key .. ".task") end
 
 	self.playerStyle:saveToXMLFile(xmlFile, key .. ".appearance")
+	self.spawn:saveToXMLFile(xmlFile, key .. ".spawn")
 
 end
 
@@ -165,31 +160,32 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 
 	if xmlFile:hasProperty(key .. ".task") then
 
-		self.task = {
-			["name"] = xmlFile:getValue(key .. ".task#node"),
-			["type"] = xmlFile:getValue(key .. ".task#type"),
-			["time"] = xmlFile:getValue(key .. ".task#time", 0),
-			["targetTime"] = xmlFile:getValue(key .. ".task#targetTime", -1),
-			["started"] = xmlFile:getValue(key .. ".task#started", false)
-		}
+		self.task = ClassUtil.getClassObject(xmlFile:getValue(key .. ".task#class")).new()
+		self.task:setOwner(self)
+		self.task:loadFromXMLFile(xmlFile, key .. ".task")
 
 	end
 
 	self.playerStyle = PlayerStyle.new()
 	self.playerStyle:loadFromXMLFile(xmlFile, key .. ".appearance")
 
+	self.spawn = ClassUtil.getClassObject(xmlFile:getValue(key .. ".spawn#class")).new()
+	self.spawn:loadFromXMLFile(xmlFile, key .. ".spawn")
+
 end
 
 
 function PlaceableNPC:onNavigationMeshLoaded()
 
-	local task = self.task
+	self.spawn:load(self.owner)
 
-	if task == nil then return end
+	if self.task ~= nil then self.task:onNavigationMeshLoaded() end
 
-	task.node = task.owner:getTargetNodeByName(task.name)
-	task.owner:setTargetOccupied(task.name)
+end
 
+
+function PlaceableNPC:getPlaceable()
+	return self.owner
 end
 
 
@@ -200,6 +196,11 @@ end
 
 function PlaceableNPC:getClass()
 	return ClassUtil.getClassObject(self.className)
+end
+
+
+function PlaceableNPC:setSpawn(spawn)
+	self.spawn = spawn
 end
 
 
@@ -301,6 +302,7 @@ function PlaceableNPC:loadCharacterFinished(state)
 
 	if state == HumanModelLoadingState.OK then
 
+		self.isLoaded = true
 		self.playerGraphics:defaultAllParameters()
 		self.speechBubble = SpeechBubble.new()
 		self.speechBubble:createFromHeadNode(self.playerGraphics.model.thirdPersonHeadNode)
@@ -383,65 +385,57 @@ end
 
 function PlaceableNPC:onPathFound(path, endDirection, node)
 
+	self.taskQueueRequest = nil
+
 	if path == nil then
-		self.taskQueueRequest = nil
 		self.pendingTask = nil
 		return
 	end
 
-	local task = self.pendingTask
-
-	if task == nil then return end
+	if self.pendingTask == nil then return end
 
 	self:setPath(path, endDirection)
-	self:setTask(node, task.type, task.targetTime)
-	self.pendingTask = nil
-	self.taskQueueRequest = nil
+	self.task = self.pendingTask
+	self.task:setOwner(self)
+	self.task:setNode(node)
 
 end
 
 
-function PlaceableNPC:getPathByType(taskType, targetTime)
+function PlaceableNPC:setPendingTask(id)
 
-	local taskRequestId = self.owner:getPathByType(taskType, self.x, self.y, self.z, self.onPathFound, self)
+	local group = self.owner:getNPCTaskTargetGroup(id)
+	local taskRequestId = self.owner:getPathByType(group, self.x, self.y, self.z, self.onPathFound, self)
 
 	if taskRequestId == nil then return false end
 
 	self.taskRequestId = taskRequestId
-	self:setPendingTask(taskType, targetTime)
+	self.pendingTask = self.owner:createNPCTask(id)
+
+	if self.pendingTask == nil then
+		self.owner:removeQueueRequest(taskRequestId)
+		return false
+	end
 
 	return true
 
 end
 
 
-function PlaceableNPC:setPendingTask(taskType, targetTime)
-
-	self.pendingTask = {
-		["type"] = taskType,
-		["targetTime"] = targetTime
-	}
-
-end
-
-
-function PlaceableNPC:setTask(node, type, targetTime)
-
-	self.task = {
-		["name"] = getName(node),
-		["node"] = node,
-		["type"] = type,
-		["time"] = 0,
-		["targetTime"] = targetTime,
-		["started"] = false
-	}
-
-end
-
-
 function PlaceableNPC:endTask()
 
-	self.lastTask = self.task.type
+	self.lastTask = self.task:getType()
+	self.task:endTask()
+	self.task = nil
+
+	self.state.isSitting, self.isIdle = false, true
+
+end
+
+
+function PlaceableNPC:endTaskFromTask()
+
+	self.lastTask = self.task:getType()
 	self.task = nil
 
 	self.state.isSitting, self.isIdle = false, true
@@ -464,10 +458,18 @@ function PlaceableNPC:onDestinationReached()
 	self.isWalking, self.isIdle = false, true
 	self.path = nil
 
-	if self.task == nil then return end
+	if self.task ~= nil then self.task:startTask() end
 
-	self.task.started = true
+end
 
+
+function PlaceableNPC:setPosition(x, y, z)
+	self.x, self.y, self.z = x, y, z
+end
+
+
+function PlaceableNPC:setRotation(rx, ry, rz)
+	self.rx, self.ry, self.rz = rx, ry, rz
 end
 
 
@@ -500,14 +502,7 @@ function PlaceableNPC:update(dT)
 
 	local task = self.task
 
-	if task ~= nil then
-
-		if task.targetTime ~= -1 then
-			task.time = task.time + dT
-			if task.time >= task.targetTime then self:endTask() end
-		end
-
-	end
+	if task ~= nil then task:update(dT) end
 
 	if self.isIdle and not self.isTurning and task == nil and self.taskQueueRequest == nil then
 		self:findTask()
@@ -565,9 +560,7 @@ function PlaceableNPC:update(dT)
 
 		self.distance = distance
 
-		local hasReachedDestination = false
-
-		if (stepY <= 0.02 and stepY >= -0.02 and distance <= 0.375) or distance <= 0.15 then
+		if path.target < #path.path and ((stepY <= 0.02 and stepY >= -0.02 and distance <= 0.375) or distance <= 0.15) then
 
 			path.target = path.target + 1
 
@@ -587,7 +580,6 @@ function PlaceableNPC:update(dT)
 					self.isTurning = true
 					self.turnTarget = path.endDirection
 				end
-				hasReachedDestination = true
 			else
 				local ct, nt = path.path[path.target], path.path[path.target + 1]
 				self.path.nextDirection = math.atan2(nt.x - ct.x, nt.z - ct.z)
@@ -600,8 +592,6 @@ function PlaceableNPC:update(dT)
 		end
 
 		self.x, self.y, self.z = x, y, z
-
-		if hasReachedDestination then self:onDestinationReached() end
 
 	end
 
@@ -622,20 +612,20 @@ function PlaceableNPC:update(dT)
 
 			if math.abs(ry - turnTarget) < 180 then
 				ry = ry + dT * delta
-				self.state.rotationVelocity = 0.1
+				self.state.rotationVelocity = delta * 0.2
 			else
 				ry = ry - dT * delta
-				self.state.rotationVelocity = -0.1
+				self.state.rotationVelocity = delta * -0.2
 			end
 
 		else
 
 			if math.abs(ry - turnTarget) < 180 then
 				ry = ry - dT * delta
-				self.state.rotationVelocity = -0.1
+				self.state.rotationVelocity = delta * -0.2
 			else
 				ry = ry + dT * delta
-				self.state.rotationVelocity = 0.1
+				self.state.rotationVelocity = delta * 0.2
 			end
 
 		end
@@ -651,6 +641,8 @@ function PlaceableNPC:update(dT)
 		end
 
 	end
+
+	if path ~= nil and path.target == #path.path and not self.isTurning then self:onDestinationReached() end
 
 	self.isWalking = not self.isIdle
 
@@ -672,6 +664,11 @@ function PlaceableNPC:update(dT)
 	self.speechBubble:setReferencePosition(self.owner:getPlayerPosition())
 	self.speechBubble:update(dT)
 
+end
+
+
+function PlaceableNPC:setIsSitting(isSitting)
+	self.state.isSitting = isSitting
 end
 
 
@@ -698,11 +695,13 @@ end
 
 function PlaceableNPC:visualiseNPC()
 
+	if not self.isLoaded then return end
+
 	local info = {
 		{ ["title"] = "Movement", ["content"] = {} }
 	}
 
-	local task, path = self.task, self.path
+	local path = self.path
 
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "class = ", ["value"] = self.className })
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "uniqueId = ", ["value"] = self.uniqueId })
@@ -713,13 +712,10 @@ function PlaceableNPC:visualiseNPC()
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "position = ", ["value"] = string.format("%.3f %.3f %.3f", self.x, self.y, self.z) })
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "rotation = ", ["value"] = string.format("%.3f %.3f %.3f", self.rx, self.ry, self.rz) })
 
-	if task ~= nil then
+	if self.task ~= nil then
 
 		table.insert(info, { ["title"] = "Task", ["content"] = {} })
-
-		table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "type = ", ["value"] = task.type })
-		table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "time = ", ["value"] = string.format("%.2fs / %.2fs", task.time / 1000, task.targetTime / 1000) })
-		table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "node = ", ["value"] = string.format("%s (%d)", task.name, task.node) })
+		self.task:visualiseTask(info[#info])
 
 	end
 
@@ -746,3 +742,6 @@ function PlaceableNPC:visualiseNPC()
 	self.playerGraphics:debugDrawAnimator(0.2, 0.2, 0.01, true)
 
 end
+
+
+PlaceableNPCManager.registerNPCClass(PlaceableNPC)

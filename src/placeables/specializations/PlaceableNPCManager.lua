@@ -4,15 +4,24 @@ PlaceableNPCManager = {}
 local specName = "spec_npcManager"
 local spawnClasses = {}
 local npcClasses = {}
+local taskClasses = {}
 
 
 function PlaceableNPCManager.registerSpawnClass(class)
     table.insert(spawnClasses, class)
+    g_placeableNPCSystemProfiler:addClass(class)
 end
 
 
 function PlaceableNPCManager.registerNPCClass(class)
     table.insert(npcClasses, class)
+    g_placeableNPCSystemProfiler:addClass(class)
+end
+
+
+function PlaceableNPCManager.registerTaskClass(class)
+    table.insert(taskClasses, class)
+    g_placeableNPCSystemProfiler:addClass(class)
 end
 
 
@@ -26,6 +35,12 @@ function PlaceableNPCManager.registerXMLPaths(schema, basePath)
 	schema:register(XMLValueType.FLOAT, basePath .. ".npcManager.spawn(?).vehicles.vehicle(?)#maxDepth", "Vehicle collision node max depth (z)")
 	schema:register(XMLValueType.FLOAT, basePath .. ".npcManager.spawn(?).vehicles.vehicle(?)#factor", "Vehicle spawn factor")
 	schema:register(XMLValueType.FLOAT, basePath .. ".npcManager.spawn(?).vehicles.vehicle(?)#driverOffset", "Vehicle driver depth offset")
+    schema:register(XMLValueType.STRING, basePath .. ".npcManager.tasks.task(?)#id", "Task ID")
+    schema:register(XMLValueType.STRING, basePath .. ".npcManager.tasks.task(?)#class", "Task class")
+    schema:register(XMLValueType.STRING, basePath .. ".npcManager.tasks.task(?)#group", "Task target group ID")
+    schema:register(XMLValueType.INT, basePath .. ".npcManager.tasks.task(?)#minTime", "Task min duration time (seconds)")
+    schema:register(XMLValueType.INT, basePath .. ".npcManager.tasks.task(?)#maxTime", "Task max duration time (seconds) (-1 for infinite)")
+    schema:register(XMLValueType.BOOL, basePath .. ".npcManager.tasks.task(?)#unique", "Task is unique (can be reset)")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?)#id", "NPC unique ID")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?)#class", "NPC lua class")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).spawn.group(?)", "NPC spawn group")
@@ -51,6 +66,9 @@ function PlaceableNPCManager.registerXMLPaths(schema, basePath)
     for _, class in pairs(npcClasses) do
         if rawget(class, "registerXMLPaths") then class.registerXMLPaths(schema, basePath .. ".npcManager.npcs") end
     end
+    for _, class in pairs(taskClasses) do
+        if rawget(class, "registerXMLPaths") then class.registerXMLPaths(schema, basePath .. ".npcManager.tasks") end
+    end
 
 	schema:setXMLSpecializationType()
 end
@@ -65,13 +83,16 @@ function PlaceableNPCManager.registerSavegameXMLPaths(schema, basePath)
     for _, class in pairs(npcClasses) do
         if rawget(class, "registerSavegameXMLPaths") then class.registerSavegameXMLPaths(schema, basePath .. ".npcs.npc(?)") end
     end
+    for _, class in pairs(taskClasses) do
+        if rawget(class, "registerSavegameXMLPaths") then class.registerSavegameXMLPaths(schema, basePath .. ".npcs.npc(?).task") end
+    end
 
 	schema:setXMLSpecializationType()
 end
 
 
 function PlaceableNPCManager.registerEventListeners(placeable)
-	SpecializationUtil.registerEventListener(placeable, "onFinalizePlacement", PlaceableNPCManager)
+	SpecializationUtil.registerEventListener(placeable, "onLoad", PlaceableNPCManager)
 	SpecializationUtil.registerEventListener(placeable, "onNavigationMeshLoaded", PlaceableNPCManager)
 	SpecializationUtil.registerEventListener(placeable, "onUpdate", PlaceableNPCManager)
 end
@@ -87,13 +108,18 @@ function PlaceableNPCManager.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "addNPCPath", PlaceableNPCManager.addNPCPath)
 	SpecializationUtil.registerFunction(placeable, "consoleCommandClearNPCs", PlaceableNPCManager.consoleCommandClearNPCs)
 	SpecializationUtil.registerFunction(placeable, "createNPC", PlaceableNPCManager.createNPC)
+	SpecializationUtil.registerFunction(placeable, "createNPCTask", PlaceableNPCManager.createNPCTask)
+	SpecializationUtil.registerFunction(placeable, "getNPCTaskTargetGroup", PlaceableNPCManager.getNPCTaskTargetGroup)
 	SpecializationUtil.registerFunction(placeable, "getPlayerPosition", PlaceableNPCManager.getPlayerPosition)
 	SpecializationUtil.registerFunction(placeable, "getRandomNPCAppearance", PlaceableNPCManager.getRandomNPCAppearance)
 	SpecializationUtil.registerFunction(placeable, "getRandomNPCName", PlaceableNPCManager.getRandomNPCName)
+	SpecializationUtil.registerFunction(placeable, "getSpawnGroupByName", PlaceableNPCManager.getSpawnGroupByName)
 	SpecializationUtil.registerFunction(placeable, "loadNPCNames", PlaceableNPCManager.loadNPCNames)
+	SpecializationUtil.registerFunction(placeable, "loadNPCTasks", PlaceableNPCManager.loadNPCTasks)
 	SpecializationUtil.registerFunction(placeable, "loadNPCTypes", PlaceableNPCManager.loadNPCTypes)
 	SpecializationUtil.registerFunction(placeable, "registerDeletedNPC", PlaceableNPCManager.registerDeletedNPC)
 	SpecializationUtil.registerFunction(placeable, "registerLoadedNPC", PlaceableNPCManager.registerLoadedNPC)
+	SpecializationUtil.registerFunction(placeable, "setNPCTaskIsValid", PlaceableNPCManager.setNPCTaskIsValid)
 	SpecializationUtil.registerFunction(placeable, "visualiseNPCs", PlaceableNPCManager.visualiseNPCs)
 end
 
@@ -107,7 +133,7 @@ function PlaceableNPCManager.prerequisitesPresent()
 end
 
 
-function PlaceableNPCManager:onFinalizePlacement()
+function PlaceableNPCManager:onLoad()
 
     local spec = self[specName]
 
@@ -117,16 +143,19 @@ function PlaceableNPCManager:onFinalizePlacement()
     spec.lastStateUpdateTicks = 0
     spec.spawn = {}
     spec.types = {}
+    spec.tasks = {}
 	spec.playerCache = { ["x"] = 0, ["y"] = 0, ["z"] = 0 }
 
     local xmlFile = self.xmlFile
 
     xmlFile:iterate("placeable.npcManager.spawn", function(_, key)
-    
-        local class = _G
-        local className = xmlFile:getValue(key .. "#class", "NPCSpawnCar")
 
-        for _, subClass in pairs(string.split(className, ".")) do class = class[subClass] end
+        local class, errorMessage = ClassUtil.getClassObjectFromUnresolvedEnvironment(xmlFile:getValue(key .. "#class", "NPCSpawn"), self.customEnvironment)
+
+        if class == nil then
+            printWarning(string.format("PlaceableNPCManager.onLoad: spawn type \"%s\" could not be loaded (error: %s)", xmlFile:getValue(key .. "#group"), errorMessage))
+            return
+        end
         
         local spawn = {
             ["class"] = class
@@ -139,8 +168,25 @@ function PlaceableNPCManager:onFinalizePlacement()
 
     self:loadNPCNames(Utils.getFilename(xmlFile:getValue("placeable.npcManager#namesFilename"), self.baseDirectory))
     self:loadNPCTypes(xmlFile, "placeable.npcManager.npcs")
+    self:loadNPCTasks(xmlFile, "placeable.npcManager.tasks")
     
     addConsoleCommand("debugClearNPCs", "Debug clear NPCs", "consoleCommandClearNPCs", self)
+
+end
+
+
+function PlaceableNPCManager:loadNPCTasks(xmlFile, key)
+
+    local spec = self[specName]
+    local tasks = spec.tasks
+
+    xmlFile:iterate(key .. ".task", function(_, taskKey)
+
+        local task, id = NPCTask.loadTaskType(xmlFile, taskKey, self.customEnvironment)
+
+        if task ~= nil and id ~= nil then tasks[id] = task end
+    
+    end)
 
 end
 
@@ -152,10 +198,12 @@ function PlaceableNPCManager:loadNPCTypes(xmlFile, key)
 
     xmlFile:iterate(key .. ".npc", function(_, npcKey)
 
-        local npcClass = _G
-        local class = xmlFile:getValue(npcKey .. "#class", "PlaceableNPC")
+        local class, errorMessage = ClassUtil.getClassObjectFromUnresolvedEnvironment(xmlFile:getValue(npcKey .. "#class", "PlaceableNPC"), self.customEnvironment)
 
-        for _, subClass in pairs(string.split(class, ".")) do npcClass = npcClass[subClass] end
+        if class == nil then
+            printWarning(string.format("PlaceableNPCManager.loadNPCTypes: NPC type \"%s\" could not be loaded (error: %s)", xmlFile:getValue(npcKey .. "#id"), errorMessage))
+            return
+        end
 
         local groups = {}
 
@@ -236,7 +284,7 @@ function PlaceableNPCManager:loadNPCTypes(xmlFile, key)
         end)
 
         types[xmlFile:getValue(npcKey .. "#id")] = {
-            ["class"] = npcClass,
+            ["class"] = class,
             ["appearance"] = appearance,
             ["spawn"] = groups
         }
@@ -345,7 +393,7 @@ end
 function PlaceableNPCManager:registerDeletedNPC(npc)
 
     local spec = self[specName]
-    local class = ClassUtil.getClassObject(npc:getClass())
+    local class = npc:getClass()
     local preset = npc:getAppearancePreset()
 
     for id, npcType in pairs(spec.types) do
@@ -360,9 +408,7 @@ function PlaceableNPCManager:registerDeletedNPC(npc)
 
     end
 
-    local spec = self[specName]
     local uniqueId = npc:getUniqueId()
-
     spec.npcs[uniqueId] = nil
 
     for i, id in pairs(spec.npcsSorted) do
@@ -371,6 +417,44 @@ function PlaceableNPCManager:registerDeletedNPC(npc)
             break
         end
     end
+
+end
+
+
+function PlaceableNPCManager:getNPCTaskTargetGroup(id)
+
+    local spec = self[specName]
+    local taskType = spec.tasks[id]
+
+    return taskType ~= nil and taskType.group or nil
+
+end
+
+
+function PlaceableNPCManager:setNPCTaskIsValid(id, isValid)
+
+    local spec = self[specName]
+    local taskType = spec.tasks[id]
+
+    if taskType.unique then taskType.valid = isValid end
+
+end
+
+
+function PlaceableNPCManager:createNPCTask(id)
+
+    local spec = self[specName]
+    local taskType = spec.tasks[id]
+
+    if taskType == nil or (taskType.unique and not taskType.valid) then return nil end
+
+    local task = taskType.class.new()
+    task:setClass(taskType.className)
+    task:setType(id)
+    task:setTargetTime(taskType.maxTime == -1 and -1 or math.random(taskType.minTime, taskType.maxTime))
+    task:loadExtraVariablesFromType(taskType)
+
+    return task
 
 end
 
@@ -387,7 +471,7 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
     if spawnGroupName == nil then spawnGroupName = npcType.spawn[math.random(#npcType.spawn)] end
 
     local spawnGroup = spec.spawn[spawnGroupName]
-    local x, y, z, ry = self:getNPCSpawnPoint(spawnGroupName)
+    local x, y, z, ry, nodeName = self:getNPCSpawnPoint(spawnGroupName)
 
     if x == nil then return end
 
@@ -411,7 +495,11 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
     end
 
     local spawn = spawnGroup.class.new()
-    spawn:load(x, y, z, ry, self, spawnGroup)
+    spawn:setSpawnNode(nodeName)
+    spawn:setGroupName(spawnGroupName)
+    spawn:setPosition(x, y, z)
+    spawn:setRotation(ry)
+    spawn:load(self)
 
     npc.x, npc.y, npc.z = spawn:getNPCSpawnPoint()
 	npc:setAppearance(self:getRandomNPCAppearance(appearance))
@@ -419,6 +507,7 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
 	npc:setName(self:getRandomNPCName(npc.gender))
     npc:setClass(ClassUtil.getClassName(npcType.class))
 	npc:load()
+    npc:setSpawn(spawn)
 
     local uniqueId = Utils.getUniqueId(npc, spec.npcs, "npc", 32)
     npc:setUniqueId(uniqueId)
@@ -427,6 +516,13 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
     table.insert(spec.npcsSorted, uniqueId)
 
     self:registerLoadedNPC(npc)
+
+end
+
+
+function PlaceableNPCManager:getSpawnGroupByName(groupName)
+
+    return self[specName].spawn[groupName]
 
 end
 
@@ -445,12 +541,14 @@ function PlaceableNPCManager:onUpdate(dt)
     self:raiseActive()
 
     local spec = self[specName]
+    local numNpcs = #spec.npcsSorted
 
-    if #spec.npcsSorted == 0 then return end
+    if numNpcs == 0 then return end
 
     local ticks = spec.lastStateUpdateTicks + 1
 
     if ticks >= 3 then
+        if spec.lastStateUpdate > numNpcs then spec.lastStateUpdate = 1 end
         ticks = 0
 	    spec.playerCache.x, spec.playerCache.y, spec.playerCache.z = getWorldTranslation(g_cameraManager:getActiveCamera())
         local npc = spec.npcs[spec.npcsSorted[spec.lastStateUpdate]]
@@ -539,9 +637,21 @@ function PlaceableNPCManager:consoleCommandClearNPCs()
 
     local spec = self[specName]
 
-    for _, npc in pairs(spec.npcs) do npc:delete() end
-
-    spec.npcs = {}
-    spec.npcsSorted = {}
+    for i = #spec.npcsSorted, 1, -1 do
+        local npc = spec.npcs[spec.npcsSorted[i]]
+        npc:delete()
+    end
 
 end
+
+
+function PlaceableNPCManager.visualise()
+
+    for _, placeable in pairs(g_currentMission.placeableSystem.placeables) do
+        if placeable.visualiseNPCs ~= nil then placeable:visualiseNPCs() end
+    end
+
+end
+
+
+g_placeableNPCSystemProfiler:addClass(PlaceableNPCManager)
