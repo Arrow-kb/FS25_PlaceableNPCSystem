@@ -28,6 +28,11 @@ function NPCTask.loadTaskType(xmlFile, key, env)
     end
 
     local maxTime = xmlFile:getValue(key .. "#maxTime", -1)
+    local conversations = {}
+
+    xmlFile:iterate(key .. ".conversations.conversation", function(_, conversationKey)
+        table.insert(conversations, xmlFile:getValue(conversationKey .. "#id"))
+    end)
 
     local task = {
         ["class"] = class,
@@ -36,6 +41,7 @@ function NPCTask.loadTaskType(xmlFile, key, env)
         ["minTime"] = xmlFile:getValue(key .. "#minTime", 30) * 1000,
         ["maxTime"] = maxTime ~= -1 and maxTime * 1000 or -1,
         ["unique"] = xmlFile:getValue(key .. "#unique", false),
+        ["conversations"] = conversations,
         ["valid"] = true
     }
 
@@ -78,7 +84,6 @@ end
 
 function NPCTask:loadFromXMLFile(xmlFile, key)
 
-    self.type = xmlFile:getValue(key .. "#type")
     self.name = xmlFile:getValue(key .. "#node")
     self.time = xmlFile:getValue(key .. "#time", 0)
     self.targetTime = xmlFile:getValue(key .. "#targetTime", -1)
@@ -88,6 +93,9 @@ end
 
 
 function NPCTask:loadExtraVariablesFromType(type)
+
+    self.conversations = type.conversations
+
 end
 
 
@@ -129,7 +137,12 @@ end
 function NPCTask:setNode(node)
     self.node = node
     self.name = getName(node)
-    self:getPlaceable():setTargetOccupied(self.name, true)
+    self:getPlaceable():setTargetOccupied(self.name, true, self.owner:getUniqueId())
+end
+
+
+function NPCTask:getNodeName()
+    return self.name
 end
 
 
@@ -158,6 +171,16 @@ function NPCTask:endTask()
     self.owner:endTaskFromTask()
 
 end
+
+
+function NPCTask:startRandomConversation()
+
+    self.owner:startConversation(self.conversations, self.name)
+
+end
+
+
+function NPCTask:onConversationEnded(id) end
 
 
 function NPCTask:update(dt)

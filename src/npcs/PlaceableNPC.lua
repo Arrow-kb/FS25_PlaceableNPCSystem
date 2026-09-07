@@ -15,7 +15,8 @@ function PlaceableNPC.registerXMLPaths(schema, basePath) end
 
 
 function PlaceableNPC.registerSavegameXMLPaths(schema, basePath)
-	schema:register(XMLValueType.STRING, basePath .. "#name", "NPC name")
+	schema:register(XMLValueType.STRING, basePath .. "#firstName", "NPC first name")
+	schema:register(XMLValueType.STRING, basePath .. "#lastName", "NPC last name")
 	schema:register(XMLValueType.STRING, basePath .. "#uniqueId", "NPC unique id")
 	schema:register(XMLValueType.STRING, basePath .. "#class", "NPC class")
 	schema:register(XMLValueType.INT, basePath .. "#preset", "NPC appearance preset")
@@ -36,6 +37,7 @@ function PlaceableNPC.registerSavegameXMLPaths(schema, basePath)
 	schema:register(XMLValueType.STRING, basePath .. ".task#node", "NPC task node")
 	schema:register(XMLValueType.BOOL, basePath .. ".task#started", "NPC task has started")
 	PlayerStyle.registerSavegameXMLPaths(schema, basePath .. ".appearance")
+	NPCConversationHandler.registerSavegameXMLPaths(schema, basePath .. ".conversation")
 end
 
 
@@ -63,6 +65,8 @@ function PlaceableNPC.new(owner, customMt)
 	self.state.isIdling = true
 	self.state.absSpeed = 0
 
+	self.conversationHandler = NPCConversationHandler.new(self)
+
 	return self
 
 end
@@ -77,7 +81,7 @@ function PlaceableNPC:delete()
 	if self.node ~= nil and self.node ~= 0 then removeFromPhysics(self.node) end
 	
 	self.spawn:delete(self.owner)
-	self.speechBubble:delete()
+	self.conversationHandler:delete()
 	self.playerGraphics:delete()
 	g_i3DManager:releaseSharedI3DFile(self.sharedLoadRequestId)
 
@@ -86,7 +90,8 @@ end
 
 function PlaceableNPC:saveToXMLFile(xmlFile, key)
 
-	if self.name ~= nil then xmlFile:setValue(key .. "#name", self.name) end
+	if self.firstName ~= nil then xmlFile:setValue(key .. "#firstName", self.firstName) end
+	if self.lastName ~= nil then xmlFile:setValue(key .. "#lastName", self.lastName) end
 	xmlFile:setValue(key .. "#class", self.className)
 	xmlFile:setValue(key .. "#uniqueId", self.uniqueId)
 	xmlFile:setValue(key .. "#position", self.x, self.y, self.z)
@@ -116,13 +121,15 @@ function PlaceableNPC:saveToXMLFile(xmlFile, key)
 
 	self.playerStyle:saveToXMLFile(xmlFile, key .. ".appearance")
 	self.spawn:saveToXMLFile(xmlFile, key .. ".spawn")
+	self.conversationHandler:saveToXMLFile(xmlFile, key .. ".conversation")
 
 end
 
 
 function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 
-	self.name = xmlFile:getValue(key .. "#name", nil)
+	self.firstName = xmlFile:getValue(key .. "#firstName")
+	self.lastName = xmlFile:getValue(key .. "#lastName")
 	self.uniqueId = xmlFile:getValue(key .. "#uniqueId")
 	self.x, self.y, self.z = xmlFile:getValue(key .. "#position")
 	self.rx, self.ry, self.rz = xmlFile:getValue(key .. "#rotation")
@@ -131,6 +138,9 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 	self.isIdle = xmlFile:getValue(key .. ".state#isIdle", false)
 	self.isTurning = xmlFile:getValue(key .. ".state#isTurning", false)
 	self.turnTarget = xmlFile:getValue(key .. ".state#turnTarget", 0)
+
+	if self.firstName == nil then self.firstName = self.owner:getNPCRandomFirstName(self.gender) end
+	if self.lastName == nil then self.lastName = self.owner:getNPCRandomLastName() end
 
 	self.path, self.task = nil, nil
 
@@ -160,8 +170,13 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 
 	if xmlFile:hasProperty(key .. ".task") then
 
-		self.task = ClassUtil.getClassObject(xmlFile:getValue(key .. ".task#class")).new()
+		local className = xmlFile:getValue(key .. ".task#class")
+		local taskTypeId = xmlFile:getValue(key .. ".task#type")
+		self.task = ClassUtil.getClassObject(className).new()
+		self.task:setType(taskTypeId)
+		self.task:loadExtraVariablesFromType(self.owner:getNPCTaskById(taskTypeId))
 		self.task:setOwner(self)
+		self.task:setClass(className)
 		self.task:loadFromXMLFile(xmlFile, key .. ".task")
 
 	end
@@ -171,6 +186,7 @@ function PlaceableNPC:loadFromXMLFile(xmlFile, key)
 
 	self.spawn = ClassUtil.getClassObject(xmlFile:getValue(key .. ".spawn#class")).new()
 	self.spawn:loadFromXMLFile(xmlFile, key .. ".spawn")
+	self.conversationHandler:loadFromXMLFile(xmlFile, key .. ".conversation")
 
 end
 
@@ -180,6 +196,12 @@ function PlaceableNPC:onNavigationMeshLoaded()
 	self.spawn:load(self.owner)
 
 	if self.task ~= nil then self.task:onNavigationMeshLoaded() end
+
+	if self.conversationHandler:getHasConversation() and self.task ~= nil then
+		self.conversationHandler:setListener(self.owner:getNPCAtTargetLinkedNode(self.task:getNodeName()))
+	else
+		self.conversationHandler:endConversation()
+	end
 
 end
 
@@ -196,6 +218,21 @@ end
 
 function PlaceableNPC:getClass()
 	return ClassUtil.getClassObject(self.className)
+end
+
+
+function PlaceableNPC:getClassName()
+	return self.className
+end
+
+
+function PlaceableNPC:getTypeId()
+	return self.id
+end
+
+
+function PlaceableNPC:setTypeId(id)
+	self.id = id
 end
 
 
@@ -304,8 +341,7 @@ function PlaceableNPC:loadCharacterFinished(state)
 
 		self.isLoaded = true
 		self.playerGraphics:defaultAllParameters()
-		self.speechBubble = SpeechBubble.new()
-		self.speechBubble:createFromHeadNode(self.playerGraphics.model.thirdPersonHeadNode)
+		self.conversationHandler:createSpeechBubble(self.playerGraphics.model.thirdPersonHeadNode)
 		self:updatePosition()
 
 		--local animation = self.playerGraphics.animation
@@ -344,6 +380,49 @@ function PlaceableNPC:onI3DFileLoaded(node, state)
 
 	end
 
+end
+
+
+function PlaceableNPC:replyToConversation(index)
+	self.conversationHandler:replyToConversation(index)
+end
+
+
+function PlaceableNPC:startConversation(conversationIds, node)
+
+	if self.conversationHandler:getHasConversation() then return false end
+
+	local conversation, id = self.owner:getConversation(conversationIds, self)
+
+	if conversation == nil then return false end
+
+	local listener = self.owner:getNPCAtTargetLinkedNode(node)
+	print("=== START CONVERSATION ===")
+
+	self.conversationHandler:setConversation(conversation, id, listener)
+	listener:setConversation(conversation, id, self)
+	self.conversationHandler:replyToConversation(1)
+
+	return true
+
+end
+
+
+function PlaceableNPC:setConversation(conversation, id, listener)
+
+	self.conversationHandler:setConversation(conversation, id, listener)
+
+end
+
+
+function PlaceableNPC:endConversation()
+	if self.task ~= nil then self.task:onConversationEnded(self.conversationHandler:getId()) end
+	self.conversationHandler:endConversation()
+end
+
+
+function PlaceableNPC:setIsTalking(isTalking)
+	--self.state.isTalking = isTalking
 end
 
 
@@ -499,6 +578,8 @@ end
 
 
 function PlaceableNPC:update(dT)
+
+	self.conversationHandler:update(dT)
 
 	local task = self.task
 
@@ -659,11 +740,6 @@ function PlaceableNPC:update(dT)
 
 	end
 
-	if self.speechBubble == nil then return end
-
-	self.speechBubble:setReferencePosition(self.owner:getPlayerPosition())
-	self.speechBubble:update(dT)
-
 end
 
 
@@ -672,24 +748,30 @@ function PlaceableNPC:setIsSitting(isSitting)
 end
 
 
-function PlaceableNPC:setName(name)
+function PlaceableNPC:setName(firstName, lastName)
 
-	self.name = name
+	self.firstName, self.lastName = firstName, lastName
 
 end
 
 
 function PlaceableNPC:getName()
 
-	return self.name
+	return self.firstName .. " " .. self.lastName
 
 end
 
 
 function PlaceableNPC:speak(text)
 
-	self.speechBubble:setText(text, math.clamp(utf8Strlen(text) * 100, 1000, 6000))
+	if self.conversationHandler:getHasConversation() then self.conversationHandler:endConversationForBoth() end
+	self.conversationHandler:setText(text)
 
+end
+
+
+function PlaceableNPC:setPlayerPosition(x, y, z)
+	self.conversationHandler:setPlayerPosition(x, y, z)
 end
 
 
@@ -711,6 +793,8 @@ function PlaceableNPC:visualiseNPC()
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "isTurning = ", ["value"] = tostring(self.isTurning) })
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "position = ", ["value"] = string.format("%.3f %.3f %.3f", self.x, self.y, self.z) })
 	table.insert(info[1].content, { ["sizeFactor"] = 0.55, ["name"] = "rotation = ", ["value"] = string.format("%.3f %.3f %.3f", self.rx, self.ry, self.rz) })
+
+	self.conversationHandler:visualiseConversation(info)
 
 	if self.task ~= nil then
 
@@ -734,12 +818,10 @@ function PlaceableNPC:visualiseNPC()
 
 	end
 
-	local infoTable = DebugInfoTable.new()
-	infoTable:createWithNodeToCamera(self.playerGraphics.model.thirdPersonHeadNode, info, 1.5, 0.05)
-	g_debugManager:addFrameElement(infoTable)
+    self.playerGraphics:debugDraw(0.2, 0.4, 0.01, true)
+    self.playerGraphics:debugDrawAnimator(0.2, 0.2, 0.01, true)
 
-	self.playerGraphics:debugDraw(0.2, 0.4, 0.01, true)
-	self.playerGraphics:debugDrawAnimator(0.2, 0.2, 0.01, true)
+	return info, self.playerGraphics.model.thirdPersonHeadNode
 
 end
 

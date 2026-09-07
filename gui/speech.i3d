@@ -2,7 +2,7 @@
 
 <i3D name="speech.i3d" version="1.6" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://i3d.giants.ch/schema/i3d-1.6.xsd">
   <Asset>
-    <Export program="GIANTS Editor 64bit" version="10.0.10"/>
+    <Export program="GIANTS Editor 64bit" version="10.0.13"/>
   </Asset>
 
   <Files>
@@ -11,7 +11,7 @@
 
 
   <Materials>
-    <Material name="Material.001" materialId="5" specularColor="1 1 0">
+    <Material name="Material.001" materialId="5" alphaBlending="true">
       <Texture fileId="1"/>
     </Material>
   </Materials>
@@ -21,7 +21,7 @@
   </Shapes>
 
   <Scene>
-    <Shape name="Plane" translation="0 0.136647 0" rotation="0 90 0" shapeId="1" nodeId="8" castsShadows="true" receiveShadows="true" doubleSided="true" materialIds="5"/>
+    <Shape name="Plane" rotation="-0 90 0" shapeId="1" nodeId="8" castsShadows="false" receiveShadows="false" doubleSided="true" materialIds="5"/>
   </Scene>
 
 </i3D>

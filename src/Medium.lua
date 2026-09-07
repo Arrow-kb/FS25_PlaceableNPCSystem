@@ -1,10 +1,12 @@
 local files = {
     "src/debug/Profiler.lua",
 	"src/placeables/PlaceableSpecLoader.lua",
+    "src/conversations/NPCConversationHandler.lua",
     "src/graphics/NPCGraphicsComponent.lua",
     "src/graphics/NPCGraphicsComponentState.lua",
     "src/gui/SpeechBubble.lua",
 	"src/npcs/PlaceableNPC.lua",
+	"src/placeables/specializations/PlaceableLights.lua",
     "src/spawners/NPCSpawn.lua",
     "src/spawners/NPCSpawnCar.lua",
     "src/tasks/NPCTask.lua",

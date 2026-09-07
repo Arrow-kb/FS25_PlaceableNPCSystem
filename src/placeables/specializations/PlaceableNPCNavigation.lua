@@ -10,8 +10,9 @@ function PlaceableNPCNavigation.registerXMLPaths(schema, basePath)
 	schema:register(XMLValueType.FLOAT, basePath .. ".npcNavigation#cellSize", "Navigation inner geometry cell size")
 	schema:register(XMLValueType.STRING, basePath .. ".npcNavigation.targets.group(?)#key", "Target group key")
 	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.targets.group(?).target(?)#node", "Target node")
+	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.targets.group(?).target(?)#linkNode", "Target linked node")
 	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.targets.target(?)#node", "Target node")
-	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.targets.target(?)#node", "Target node")
+	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.targets.target(?)#linkNode", "Target linked node")
 	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.paths.path(?)#startNode", "Preloaded path start node")
 	schema:register(XMLValueType.NODE_INDEX, basePath .. ".npcNavigation.paths.path(?)#endNode", "Preloaded path end node")
 	schema:register(XMLValueType.STRING, basePath .. ".npcNavigation.rooms.room(?)#id", "Room ID")
@@ -47,8 +48,10 @@ function PlaceableNPCNavigation.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "getPath", PlaceableNPCNavigation.getPath)
 	SpecializationUtil.registerFunction(placeable, "getPathByType", PlaceableNPCNavigation.getPathByType)
 	SpecializationUtil.registerFunction(placeable, "getRoomForPoint", PlaceableNPCNavigation.getRoomForPoint)
+	SpecializationUtil.registerFunction(placeable, "getTargetLinkedNode", PlaceableNPCNavigation.getTargetLinkedNode)
 	SpecializationUtil.registerFunction(placeable, "intIndexToPoint", PlaceableNPCNavigation.intIndexToPoint)
 	SpecializationUtil.registerFunction(placeable, "setTargetOccupied", PlaceableNPCNavigation.setTargetOccupied)
+	SpecializationUtil.registerFunction(placeable, "getTargetByName", PlaceableNPCNavigation.getTargetByName)
 	SpecializationUtil.registerFunction(placeable, "getTargetNodeByName", PlaceableNPCNavigation.getTargetNodeByName)
 	SpecializationUtil.registerFunction(placeable, "normalizeCoordinate", PlaceableNPCNavigation.normalizeCoordinate)
 	SpecializationUtil.registerFunction(placeable, "pointToIntIndex", PlaceableNPCNavigation.pointToIntIndex)
@@ -153,11 +156,13 @@ function PlaceableNPCNavigation:createPathTargets(xmlFile, key)
 
         xmlFile:iterate(key .. ".target", function(_, targetKey)
             local node = xmlFile:getValue(targetKey .. "#node", nil, self.components, self.i3dMappings)
+            local linkedNode = xmlFile:getValue(targetKey .. "#linkNode", nil, self.components, self.i3dMappings)
             local name = getName(node)
             table.insert(group, name)
             spec.targets[name] = {
                 ["node"] = node,
-                ["occupied"] = false
+                ["occupied"] = false,
+                ["linked"] = linkedNode ~= nil and getName(linkedNode) or nil
             }
         end)
         
@@ -167,9 +172,11 @@ function PlaceableNPCNavigation:createPathTargets(xmlFile, key)
 
     xmlFile:iterate(key .. ".target", function(_, targetKey)
         local node = xmlFile:getValue(targetKey .. "#node", nil, self.components, self.i3dMappings)
+        local linkedNode = xmlFile:getValue(targetKey .. "#linkNode", nil, self.components, self.i3dMappings)
         spec.targets[getName(node)] = {
             ["node"] = node,
-            ["occupied"] = false
+            ["occupied"] = false,
+            ["linked"] = linkedNode ~= nil and getName(linkedNode) or nil
         }
     end)
 
@@ -305,7 +312,7 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner
 
     end
     
-    self:setTargetOccupied(name, true)
+    self:setTargetOccupied(name, true, owner:getUniqueId())
 
     local queueId = Utils.getUniqueId(target, spec.queue, "navigationQueue", 32)
     local tx, tz = self:intIndexToPoint(target.x, target.z)
@@ -335,11 +342,23 @@ function PlaceableNPCNavigation:getPathByType(pathType, x, y, z, callback, owner
 end
 
 
-function PlaceableNPCNavigation:setTargetOccupied(targetName, isOccupied)
+function PlaceableNPCNavigation:getTargetLinkedNode(targetName)
 
-    local spec = self[specName]
+    local target = self[specName].targets[targetName]
 
-    if spec.targets[targetName] ~= nil then spec.targets[targetName].occupied = isOccupied end
+    if target ~= nil then return target.linked end
+
+end
+
+
+function PlaceableNPCNavigation:setTargetOccupied(targetName, isOccupied, uniqueId)
+
+    local target = self[specName].targets[targetName]
+
+    if target == nil then return end
+        
+    target.occupied = isOccupied
+    target.npc = uniqueId
 
 end
 
@@ -350,6 +369,13 @@ function PlaceableNPCNavigation:getTargetNodeByName(targetName)
     local target = spec.targets[targetName]
 
     return target ~= nil and target.node or nil
+
+end
+
+
+function PlaceableNPCNavigation:getTargetByName(targetName)
+
+    return self[specName].targets[targetName]
 
 end
 

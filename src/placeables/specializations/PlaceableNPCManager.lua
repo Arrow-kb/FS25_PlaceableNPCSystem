@@ -41,6 +41,7 @@ function PlaceableNPCManager.registerXMLPaths(schema, basePath)
     schema:register(XMLValueType.INT, basePath .. ".npcManager.tasks.task(?)#minTime", "Task min duration time (seconds)")
     schema:register(XMLValueType.INT, basePath .. ".npcManager.tasks.task(?)#maxTime", "Task max duration time (seconds) (-1 for infinite)")
     schema:register(XMLValueType.BOOL, basePath .. ".npcManager.tasks.task(?)#unique", "Task is unique (can be reset)")
+    schema:register(XMLValueType.STRING, basePath .. ".npcManager.tasks.task(?).conversations.conversation(?)#id", "Task conversation ID")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?)#id", "NPC unique ID")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?)#class", "NPC lua class")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).spawn.group(?)", "NPC spawn group")
@@ -109,10 +110,13 @@ function PlaceableNPCManager.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "consoleCommandClearNPCs", PlaceableNPCManager.consoleCommandClearNPCs)
 	SpecializationUtil.registerFunction(placeable, "createNPC", PlaceableNPCManager.createNPC)
 	SpecializationUtil.registerFunction(placeable, "createNPCTask", PlaceableNPCManager.createNPCTask)
+	SpecializationUtil.registerFunction(placeable, "getNPCAtTargetLinkedNode", PlaceableNPCManager.getNPCAtTargetLinkedNode)
+	SpecializationUtil.registerFunction(placeable, "getNPCRandomFirstName", PlaceableNPCManager.getNPCRandomFirstName)
+	SpecializationUtil.registerFunction(placeable, "getNPCRandomLastName", PlaceableNPCManager.getNPCRandomLastName)
+	SpecializationUtil.registerFunction(placeable, "getNPCTaskById", PlaceableNPCManager.getNPCTaskById)
 	SpecializationUtil.registerFunction(placeable, "getNPCTaskTargetGroup", PlaceableNPCManager.getNPCTaskTargetGroup)
 	SpecializationUtil.registerFunction(placeable, "getPlayerPosition", PlaceableNPCManager.getPlayerPosition)
 	SpecializationUtil.registerFunction(placeable, "getRandomNPCAppearance", PlaceableNPCManager.getRandomNPCAppearance)
-	SpecializationUtil.registerFunction(placeable, "getRandomNPCName", PlaceableNPCManager.getRandomNPCName)
 	SpecializationUtil.registerFunction(placeable, "getSpawnGroupByName", PlaceableNPCManager.getSpawnGroupByName)
 	SpecializationUtil.registerFunction(placeable, "loadNPCNames", PlaceableNPCManager.loadNPCNames)
 	SpecializationUtil.registerFunction(placeable, "loadNPCTasks", PlaceableNPCManager.loadNPCTasks)
@@ -141,6 +145,7 @@ function PlaceableNPCManager:onLoad()
     spec.npcsSorted = {}
     spec.lastStateUpdate = 1
     spec.lastStateUpdateTicks = 0
+    spec.lastPlayerUpdateTicks = 0
     spec.spawn = {}
     spec.types = {}
     spec.tasks = {}
@@ -296,28 +301,35 @@ end
 
 function PlaceableNPCManager:loadNPCNames(xmlFilename)
 
-    local spec = self[specName]
 	local xmlFile = XMLFile.loadIfExists("npcNames", xmlFilename)
 
-	spec.names = { ["playerM"] = {}, ["playerF"] = {} }
+	local names = { ["first"] = { ["playerM"] = {}, ["playerF"] = {} }, ["last"] = {} }
 
 	if xmlFile ~= nil then
 
-		xmlFile:iterate("npcNames.male.name", function(_, key)
+		xmlFile:iterate("npcNames.first.male.name", function(_, key)
 
-			table.insert(spec.names.playerM, xmlFile:getString(key .. "#value"))
+			table.insert(names.first.playerM, xmlFile:getString(key))
 
 		end)
 
-		xmlFile:iterate("npcNames.female.name", function(_, key)
+		xmlFile:iterate("npcNames.first.female.name", function(_, key)
 
-			table.insert(spec.names.playerF, xmlFile:getString(key .. "#value"))
+			table.insert(names.first.playerF, xmlFile:getString(key))
+
+		end)
+
+		xmlFile:iterate("npcNames.last.name", function(_, key)
+
+			table.insert(names.last, xmlFile:getString(key))
 
 		end)
 
 		xmlFile:delete()
 
 	end
+
+    self[specName].names = names
 
 end
 
@@ -381,6 +393,7 @@ function PlaceableNPCManager:registerLoadedNPC(npc)
         local appearance = npcType.appearance[preset]
         if appearance.unique then appearance.available = false end
             
+        npc:setTypeId(id)
         SpecializationUtil.raiseEvent(self, "onNPCLoaded", id, npc)
         break
 
@@ -421,6 +434,24 @@ function PlaceableNPCManager:registerDeletedNPC(npc)
 end
 
 
+function PlaceableNPCManager:getNPCAtTargetLinkedNode(targetName)
+
+    local linkedNode = self:getTargetLinkedNode(targetName)
+
+    if linkedNode == nil then return nil end
+
+    local spec = self[specName]
+    local linked = self:getTargetByName(linkedNode)
+
+    if linked == nil then return nil end
+
+    local uniqueId = linked.npc
+    
+    return spec.npcs[uniqueId]
+
+end
+
+
 function PlaceableNPCManager:getNPCTaskTargetGroup(id)
 
     local spec = self[specName]
@@ -437,6 +468,13 @@ function PlaceableNPCManager:setNPCTaskIsValid(id, isValid)
     local taskType = spec.tasks[id]
 
     if taskType.unique then taskType.valid = isValid end
+
+end
+
+
+function PlaceableNPCManager:getNPCTaskById(id)
+
+    return self[specName].tasks[id]
 
 end
 
@@ -504,7 +542,7 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
     npc.x, npc.y, npc.z = spawn:getNPCSpawnPoint()
 	npc:setAppearance(self:getRandomNPCAppearance(appearance))
     npc:setAppearancePreset(preset)
-	npc:setName(self:getRandomNPCName(npc.gender))
+	npc:setName(self:getNPCRandomFirstName(npc.gender), self:getNPCRandomLastName())
     npc:setClass(ClassUtil.getClassName(npcType.class))
 	npc:load()
     npc:setSpawn(spawn)
@@ -545,22 +583,33 @@ function PlaceableNPCManager:onUpdate(dt)
 
     if numNpcs == 0 then return end
 
-    local ticks = spec.lastStateUpdateTicks + 1
+    local ticks1 = spec.lastStateUpdateTicks + 1
+    local ticks2 = spec.lastPlayerUpdateTicks + 1
 
-    if ticks >= 3 then
+    if ticks1 >= 3 then
         if spec.lastStateUpdate > numNpcs then spec.lastStateUpdate = 1 end
-        ticks = 0
-	    spec.playerCache.x, spec.playerCache.y, spec.playerCache.z = getWorldTranslation(g_cameraManager:getActiveCamera())
+        ticks1 = 0
         local npc = spec.npcs[spec.npcsSorted[spec.lastStateUpdate]]
         npc:setRoom(self:getRoomForPoint(npc.x, npc.y, npc.z))
         spec.lastStateUpdate = spec.lastStateUpdate == #spec.npcsSorted and 1 or (spec.lastStateUpdate + 1)
     end
 
+    local needsPlayerUpdate = ticks2 >= 5
+    local x, y, z
+
+    if needsPlayerUpdate then
+        x, y, z = getWorldTranslation(g_cameraManager:getActiveCamera())
+        spec.playerCache.x, spec.playerCache.y, spec.playerCache.z = x, y, z
+        ticks2 = 0
+    end
+
     for _, npc in pairs(spec.npcs) do
+        if needsPlayerUpdate then npc:setPlayerPosition(x, y, z) end
         npc:update(dt)
     end
 
-    spec.lastStateUpdateTicks = ticks
+    spec.lastStateUpdateTicks = ticks1
+    spec.lastPlayerUpdateTicks = ticks2
 
 end
 
@@ -599,11 +648,19 @@ function PlaceableNPCManager:getRandomNPCAppearance(preset)
 
 end
 
-function PlaceableNPCManager:getRandomNPCName(gender)
+function PlaceableNPCManager:getNPCRandomFirstName(gender)
 
-	local spec = self[specName]
+	local names = self[specName].names.first[gender]
 
-	return spec.names[gender][math.random(1, #spec.names[gender])]
+	return (names == nil or #names == 0) and (gender == "playerM" and "John" or "Jane") or names[math.random(1, #names)]
+
+end
+
+function PlaceableNPCManager:getNPCRandomLastName()
+
+	local names = self[specName].names.last
+
+	return #names == 0 and "Smith" or names[math.random(1, #names)]
 
 end
 
@@ -628,7 +685,13 @@ function PlaceableNPCManager:visualiseNPCs()
     local spec = self[specName]
     local npcs = spec.npcs
 
-    for _, npc in pairs(npcs) do npc:visualiseNPC() end
+    for _, npc in pairs(npcs) do
+        local info, node = npc:visualiseNPC()
+        if info == nil or node == nil or node == 0 then continue end
+        local infoTable = DebugInfoTable.new()
+        infoTable:createWithNodeToCamera(node, info, 1.5, 0.05)
+        g_debugManager:addFrameElement(infoTable)
+    end
 
 end
 
