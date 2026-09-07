@@ -85,7 +85,7 @@ function SpeechBubble:setText(text, duration)
 	set3DTextWrapWidth(1.238)
 	setTextLineHeightScale(0.75)
 
-	self.textNode = create3DLinkedText(self.node, 0.15, 0.58, 0.32, 0, 0, 0, 0.1, self.text)
+	self.textNode = create3DLinkedText(self.node, 0.15, 0.58, 0.3, 0, 0, 0, 0.1, self.text)
 
 	setTextColor(1, 1, 1, 1)
 	setTextAlignment(RenderText.ALIGN_LEFT)

@@ -14,7 +14,8 @@ local files = {
     "src/tasks/NPCTaskToggleDoors.lua",
     "src/tasks/NPCTaskToggleLights.lua",
 	"src/utils/ClassUtil.lua",
-	"src/utils/PathUtil.lua"
+	"src/utils/PathUtil.lua",
+	"src/utils/Utils.lua"
 }
 
 

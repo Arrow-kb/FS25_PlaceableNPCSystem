@@ -44,14 +44,6 @@ function NPCTaskToggleDoors:loadExtraVariablesFromType(type)
 end
 
 
-function NPCTaskToggleDoors:setNode(node)
-
-    NPCTaskToggleDoors:superClass().setNode(self, node)
-    self:getPlaceable():setNPCTaskIsValid(self.type, false)
-
-end
-
-
 function NPCTaskToggleDoors:startTask()
 
     NPCTaskToggleDoors:superClass().startTask(self)

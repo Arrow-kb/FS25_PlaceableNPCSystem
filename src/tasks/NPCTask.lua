@@ -137,12 +137,19 @@ end
 function NPCTask:setNode(node)
     self.node = node
     self.name = getName(node)
-    self:getPlaceable():setTargetOccupied(self.name, true, self.owner:getUniqueId())
+    local placeable = self:getPlaceable()
+    placeable:setTargetOccupied(self.name, true, self.owner:getUniqueId())
+    placeable:setNPCTaskIsValid(self.type, false)
 end
 
 
 function NPCTask:getNodeName()
     return self.name
+end
+
+
+function NPCTask:getNode()
+    return self.node
 end
 
 
@@ -173,9 +180,9 @@ function NPCTask:endTask()
 end
 
 
-function NPCTask:startRandomConversation()
+function NPCTask:startRandomConversation(listener)
 
-    self.owner:startConversation(self.conversations, self.name)
+    self.owner:startConversation(self.conversations, self.name, listener)
 
 end
 

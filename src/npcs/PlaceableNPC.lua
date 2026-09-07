@@ -388,16 +388,14 @@ function PlaceableNPC:replyToConversation(index)
 end
 
 
-function PlaceableNPC:startConversation(conversationIds, node)
+function PlaceableNPC:startConversation(conversationIds, node, listener)
 
 	if self.conversationHandler:getHasConversation() then return false end
 
-	local conversation, id = self.owner:getConversation(conversationIds, self)
+	listener = listener or self.owner:getNPCAtTargetLinkedNode(node)
+	local conversation, id = self.owner:getConversation(conversationIds, self, listener)
 
 	if conversation == nil then return false end
-
-	local listener = self.owner:getNPCAtTargetLinkedNode(node)
-	print("=== START CONVERSATION ===")
 
 	self.conversationHandler:setConversation(conversation, id, listener)
 	listener:setConversation(conversation, id, self)
@@ -481,20 +479,32 @@ function PlaceableNPC:onPathFound(path, endDirection, node)
 end
 
 
-function PlaceableNPC:setPendingTask(id)
+function PlaceableNPC:setPendingTask(id, needsPath, node)
 
-	local group = self.owner:getNPCTaskTargetGroup(id)
-	local taskRequestId = self.owner:getPathByType(group, self.x, self.y, self.z, self.onPathFound, self)
+	if not self.owner:getNPCTaskIsValid(id) then return false end
 
-	if taskRequestId == nil then return false end
+	if needsPath then
+		local group = self.owner:getNPCTaskTargetGroup(id)
+		local taskRequestId = self.owner:getPathByType(group, self.x, self.y, self.z, self.onPathFound, self)
 
-	self.taskRequestId = taskRequestId
-	self.pendingTask = self.owner:createNPCTask(id)
+		if taskRequestId == nil then return false end
 
-	if self.pendingTask == nil then
-		self.owner:removeQueueRequest(taskRequestId)
-		return false
+		self.taskRequestId = taskRequestId
+		self.pendingTask = self.owner:createNPCTask(id)
+
+		if self.pendingTask == nil then
+			self.owner:removeQueueRequest(taskRequestId)
+			return false
+		end
+		return true
 	end
+
+	self.task = self.owner:createNPCTask(id)
+	if self.task == nil then return false end
+	self.task:setOwner(self)
+	self.task:setNode(node)
+	self.task:startTask()
+	self:turnToFaceTaskNode()
 
 	return true
 
@@ -515,6 +525,7 @@ end
 function PlaceableNPC:endTaskFromTask()
 
 	self.lastTask = self.task:getType()
+	self.task:delete()
 	self.task = nil
 
 	self.state.isSitting, self.isIdle = false, true
@@ -544,6 +555,11 @@ end
 
 function PlaceableNPC:setPosition(x, y, z)
 	self.x, self.y, self.z = x, y, z
+end
+
+
+function PlaceableNPC:getPosition()
+	return self.x, self.y, self.z
 end
 
 
@@ -743,6 +759,30 @@ function PlaceableNPC:update(dT)
 end
 
 
+function PlaceableNPC:turnToFaceXZ(x, z)
+	local dir = math.atan2(x - self.x, z - self.z)
+	if self.ry <= dir + 0.1 and self.ry >= dir - 0.1 then
+		self.ry = dir
+		return
+	end
+	self.isTurning = true
+	self.turnTarget = dir
+end
+
+
+function PlaceableNPC:turnToFaceTaskNode()
+	if self.task == nil then return end
+	local dx, _, dz = localDirectionToWorld(self.task:getNode(), 0, 0, 1)
+	local dir = math.atan2(dx, dz)
+	if self.ry <= dir + 0.1 and self.ry >= dir - 0.1 then
+		self.ry = dir
+		return
+	end
+	self.isTurning = true
+	self.turnTarget = dir
+end
+
+
 function PlaceableNPC:setIsSitting(isSitting)
 	self.state.isSitting = isSitting
 end
@@ -819,7 +859,7 @@ function PlaceableNPC:visualiseNPC()
 	end
 
     self.playerGraphics:debugDraw(0.2, 0.4, 0.01, true)
-    self.playerGraphics:debugDrawAnimator(0.2, 0.2, 0.01, true)
+    --self.playerGraphics:debugDrawAnimator(0.2, 0.2, 0.01, true)
 
 	return info, self.playerGraphics.model.thirdPersonHeadNode
 

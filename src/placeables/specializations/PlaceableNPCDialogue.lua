@@ -25,7 +25,7 @@ function PlaceableNPCDialogue.registerXMLPaths(placeableSchema, basePath)
 	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue#conditions", "Conditions XML file path")
 	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?)#id", "Conversation ID")
 	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?)#defaultStart", "Conversation default start point")
-	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?)#folder", "Folder containing conversation xml file")
+	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?)#path", "Conversation xml file path")
 	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?).npc(?)#id", "Conversation NPC type ID")
 	placeableSchema:register(XMLValueType.STRING, basePath .. ".npcDialogue.conversation(?).npc(?)#start", "Conversation NPC type entry point")
     placeableSchema:setXMLSpecializationType()
@@ -39,15 +39,17 @@ function PlaceableNPCDialogue.registerXMLPaths(placeableSchema, basePath)
     local conversationSchema = PlaceableNPCDialogue.SCHEMA.CONVERSATIONS
     conversationSchema:register(XMLValueType.STRING, "conversation.section(?)#id", "Conversation section ID")
     conversationSchema:register(XMLValueType.BOOL, "conversation.section(?)#canEnd", "Conversation section can be end of conversation")
-    conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).text", "Conversation section phrase text")
+    conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).text(?)", "Conversation section phrase text")
+    conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).text(?)#language", "Conversation section phrase language")
     conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).reply#id", "Conversation section phrase reply ID")
-    conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).condition(?)#value", "Conversation section phrase condition ID")
+    conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).condition(?)#id", "Conversation section phrase condition ID")
     conversationSchema:register(XMLValueType.STRING, "conversation.section(?).phrase(?).trigger(?)#function", "Conversation section phrase function to be triggered")
 
     local wordsSchema = PlaceableNPCDialogue.SCHEMA.WORDS
     wordsSchema:register(XMLValueType.STRING, "words.type(?)#id", "Word type ID")
-    wordsSchema:register(XMLValueType.STRING, "words.type(?).word(?).text", "Word text")
-    wordsSchema:register(XMLValueType.STRING, "words.type(?).word(?).condition(?)#value", "Word condition")
+    wordsSchema:register(XMLValueType.STRING, "words.type(?).word(?).text(?)", "Word text")
+    wordsSchema:register(XMLValueType.STRING, "words.type(?).word(?).text(?)#language", "Word language")
+    wordsSchema:register(XMLValueType.STRING, "words.type(?).word(?).condition(?)#id", "Word condition")
 
 end
 
@@ -96,13 +98,12 @@ function PlaceableNPCDialogue:onLoad()
 
     xmlFile:iterate("placeable.npcDialogue.conversation", function(_, key)
 
-        local folderPath = Utils.getFilename(xmlFile:getValue(key .. "#folder", self.baseDirectory), self.baseDirectory) .. "/"
-        local filePath = fileExists(folderPath .. g_languageShort .. ".xml") and (folderPath .. g_languageShort .. ".xml") or (folderPath .. "en.xml")
-        local conversationXMLFile = XMLFile.loadIfExists("conversation", filePath, PlaceableNPCDialogue.SCHEMA.CONVERSATIONS)
+        local conversationXMLFile = XMLFile.loadIfExists("conversation", Utils.getFilename(xmlFile:getValue(key .. "#path", self.baseDirectory), self.baseDirectory), PlaceableNPCDialogue.SCHEMA.CONVERSATIONS)
 
         if conversationXMLFile == nil then return end
 
-        local conversation = self:loadConversation(conversationXMLFile)
+        local conversationId = xmlFile:getValue(key .. "#id")
+        local conversation = self:loadConversation(conversationXMLFile, conversationId)
         conversationXMLFile:delete()
 
         local npcs = {}
@@ -112,7 +113,7 @@ function PlaceableNPCDialogue:onLoad()
         end)
 
 
-        conversations[xmlFile:getValue(key .. "#id")] = {
+        conversations[conversationId] = {
             ["conversation"] = conversation,
             ["default"] = xmlFile:getValue(key .. "#defaultStart"),
             ["npcs"] = npcs
@@ -125,28 +126,48 @@ function PlaceableNPCDialogue:onLoad()
 end
 
 
-function PlaceableNPCDialogue:loadConversation(xmlFile)
+function PlaceableNPCDialogue:loadConversation(xmlFile, conversationId)
 
     local conversation = {}
 
     xmlFile:iterate("conversation.section", function(_, key)
     
         local phrases = {}
+        local abortLoad = false
+        local sectionId = xmlFile:getValue(key .. "#id")
 
         xmlFile:iterate(key .. ".phrase", function(_, phraseKey)
 
             local conditions, triggers = {}, {}
 
             xmlFile:iterate(phraseKey .. ".condition", function(_, conditionKey)
-                table.insert(conditions, xmlFile:getValue(conditionKey .. "#value"))
+                table.insert(conditions, xmlFile:getValue(conditionKey .. "#id"))
             end)
 
             xmlFile:iterate(phraseKey .. ".trigger", function(_, triggerKey)
                 table.insert(triggers, xmlFile:getValue(triggerKey .. "#function"))
             end)
 
+            local text
+
+            xmlFile:iterate(phraseKey .. ".text", function(_, textKey)
+                local lang = xmlFile:getValue(textKey .. "#language", "en")
+                if lang == "en" then text = xmlFile:getValue(textKey) end
+                if lang == g_languageShort then
+                    text = xmlFile:getValue(textKey)
+                    return
+                end
+            end)
+
+            if text == nil then
+                abortLoad = true
+                printWarning(string.format("PlaceableNPCDialogue.loadConversation: could not load conversation '%s' - no suitable text language found at section '%s'", conversationId, sectionId))
+                conversation = nil
+                return
+            end
+
             table.insert(phrases, {
-                ["text"] = string.split(xmlFile:getValue(phraseKey .. ".text"), " "),
+                ["text"] = string.split(text, " "),
                 ["reply"] = xmlFile:getValue(phraseKey .. ".reply#id"),
                 ["conditions"] = conditions,
                 ["triggers"] = triggers
@@ -154,7 +175,9 @@ function PlaceableNPCDialogue:loadConversation(xmlFile)
 
         end)
 
-        conversation[xmlFile:getValue(key .. "#id")] = {
+        if abortLoad then return end
+
+        conversation[sectionId] = {
             ["phrases"] = phrases,
             ["end"] = xmlFile:getValue(key .. "#canEnd", false)
         }
@@ -174,23 +197,39 @@ function PlaceableNPCDialogue:loadWords(xmlFile)
     xmlFile:iterate("words.type", function(_, key)
     
         local wordType = {}
+        local wordId = xmlFile:getValue(key .. "#id")
 
-        xmlFile:iterate(key .. ".word", function(_, wordKey)
+        xmlFile:iterate(key .. ".word", function(index, wordKey)
         
             local conditions = {}
 
             xmlFile:iterate(wordKey .. ".condition", function(_, conditionKey)
-                table.insert(conditions, xmlFile:getValue(conditionKey .. "#value"))
+                table.insert(conditions, xmlFile:getValue(conditionKey .. "#id"))
             end)
 
-            table.insert(wordType, {
-                ["text"] = xmlFile:getValue(wordKey .. ".text"),
-                ["conditions"] = conditions
-            })
+            local text
+
+            xmlFile:iterate(wordKey .. ".text", function(_, textKey)
+                local lang = xmlFile:getValue(textKey .. "#language", "en")
+                if lang == "en" then text = xmlFile:getValue(textKey) end
+                if lang == g_languageShort then
+                    text = xmlFile:getValue(textKey)
+                    return
+                end
+            end)
+
+            if text == nil then
+                printWarning(string.format("PlaceableNPCDialogue.loadWords: could not load word '%s' - no suitable text language found at index '%d'", wordId, index))
+            else
+                table.insert(wordType, {
+                    ["text"] = text,
+                    ["conditions"] = conditions
+                })
+            end
         
         end)
 
-        words[xmlFile:getValue(key .. "#id")] = wordType
+        words[wordId] = wordType
     
     end)
 
@@ -290,7 +329,9 @@ function PlaceableNPCDialogue:resolveDialogueConditions(conditions, args)
 
     for _, rawCondition in pairs(conditions) do
 
-        local condition = allConditions[rawCondition]
+        local isNot = utf8Substr(rawCondition, 0, 1) == "!"
+        local formattedCondition = isNot and utf8Substr(rawCondition, 1) or rawCondition
+        local condition = allConditions[formattedCondition]
 
         if condition == nil or condition.target == nil then continue end
 
@@ -306,10 +347,19 @@ function PlaceableNPCDialogue:resolveDialogueConditions(conditions, args)
             targetValue = condition.value
         end
 
-        if condition.op == nil and targetValue ~= value then return false end
-        if condition.op == "not_equals" and targetValue == value then return false end
-        if condition.op == "lesser" and targetValue <= value then return false end
-        if condition.op == "greater" and targetValue >= value then return false end
+        if condition.op == nil then
+            if isNot and targetValue == value then return false end
+            if not isNot and targetValue ~= value then return false end
+        elseif condition.op == "not_equals" then
+            if isNot and targetValue ~= value then return false end
+            if not isNot and targetValue == value then return false end
+        elseif condition.op == "lesser" then
+            if isNot and targetValue > value then return false end
+            if not isNot and targetValue <= value then return false end
+        elseif condition.op == "greater" then
+            if isNot and targetValue < value then return false end
+            if not isNot and targetValue >= value then return false end
+        end
 
     end
 
@@ -329,9 +379,6 @@ function PlaceableNPCDialogue:getWord(wordTypesString, args)
 
     local variables = string.sub(wordTypesString, indexStart + 1, indexEnd - 1)
     local wordTypes = string.split(variables, "|")
-    local wordTypesToRemove = {}
-
-    for i = #wordTypesToRemove, 1, -1 do table.remove(wordTypes, wordTypesToRemove[i]) end
 
     if #wordTypes == 0 then return "" end
 
@@ -351,7 +398,7 @@ function PlaceableNPCDialogue:getWord(wordTypesString, args)
 
     for _, word in pairs(words[wordType]) do
 
-        if self:resolveDialogueConditions(word.conditions, args) then table.insert(viablePhrases, word.value) end
+        if self:resolveDialogueConditions(word.conditions, args) then table.insert(viablePhrases, word.text) end
 
     end
 
@@ -378,7 +425,7 @@ function PlaceableNPCDialogue:getPhrase(phrases, args)
 
     for _, phrase in pairs(phrases) do
 
-        if self:resolveDialogueConditions(phrase.conditions, args) then table.insert(viablePhrases, phrase ) end
+        if self:resolveDialogueConditions(phrase.conditions, args) then table.insert(viablePhrases, phrase) end
 
     end
 
@@ -394,13 +441,14 @@ function PlaceableNPCDialogue:getPhrase(phrases, args)
 
         local variable = self:getWord(word, args)
 
-        if variable == "" then
+        if variable == nil or variable == "" then
             table.insert(wordsToDelete, i)
             continue
         end
 
         local prev = text[i - 1]
-        if prev ~= nil and (prev[-1] == "!" or prev[-1] == "." or prev[-1] == "?") or i == 1 then variable = string.sub(variable, 1, 1):upper() .. (#variable > 1 and string.sub(variable, 2) or "") end
+        local lastChar = prev ~= nil and utf8Substr(prev, utf8Strlen(prev) - 1, 1)
+        if lastChar ~= nil and (lastChar == "!" or lastChar == "." or lastChar == "?") or i == 1 then variable = utf8ToUpper(utf8Substr(variable, 0, 1)) .. (utf8Strlen(variable) > 1 and utf8Substr(variable, 1) or "") end
 
         text[i] = variable
 

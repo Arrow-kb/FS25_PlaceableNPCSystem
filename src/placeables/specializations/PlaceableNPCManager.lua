@@ -47,6 +47,8 @@ function PlaceableNPCManager.registerXMLPaths(schema, basePath)
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).spawn.group(?)", "NPC spawn group")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?)#gender", "NPC appearance gender")
 	schema:register(XMLValueType.BOOL, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?)#unique", "NPC appearance preset is unique")
+	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?)#firstName", "NPC appearance preset first name for unique presets")
+	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?)#lastName", "NPC appearance preset last name for unique presets")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?).heads.head(?)", "NPC appearance head")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?).jackets.jacket(?)", "NPC appearance jacket")
 	schema:register(XMLValueType.STRING, basePath .. ".npcManager.npcs.npc(?).appearance.preset(?).shirts.shirt(?)", "NPC appearance shirt")
@@ -88,6 +90,9 @@ function PlaceableNPCManager.registerSavegameXMLPaths(schema, basePath)
         if rawget(class, "registerSavegameXMLPaths") then class.registerSavegameXMLPaths(schema, basePath .. ".npcs.npc(?).task") end
     end
 
+    schema:register(XMLValueType.STRING, basePath .. ".tasks.task(?)#id", "Task ID")
+    schema:register(XMLValueType.BOOL, basePath .. ".tasks.task(?)#valid", "Task is valid (only unique tasks)")
+
 	schema:setXMLSpecializationType()
 end
 
@@ -110,10 +115,12 @@ function PlaceableNPCManager.registerFunctions(placeable)
 	SpecializationUtil.registerFunction(placeable, "consoleCommandClearNPCs", PlaceableNPCManager.consoleCommandClearNPCs)
 	SpecializationUtil.registerFunction(placeable, "createNPC", PlaceableNPCManager.createNPC)
 	SpecializationUtil.registerFunction(placeable, "createNPCTask", PlaceableNPCManager.createNPCTask)
+	SpecializationUtil.registerFunction(placeable, "getClosestNPC", PlaceableNPCManager.getClosestNPC)
 	SpecializationUtil.registerFunction(placeable, "getNPCAtTargetLinkedNode", PlaceableNPCManager.getNPCAtTargetLinkedNode)
 	SpecializationUtil.registerFunction(placeable, "getNPCRandomFirstName", PlaceableNPCManager.getNPCRandomFirstName)
 	SpecializationUtil.registerFunction(placeable, "getNPCRandomLastName", PlaceableNPCManager.getNPCRandomLastName)
 	SpecializationUtil.registerFunction(placeable, "getNPCTaskById", PlaceableNPCManager.getNPCTaskById)
+	SpecializationUtil.registerFunction(placeable, "getNPCTaskIsValid", PlaceableNPCManager.getNPCTaskIsValid)
 	SpecializationUtil.registerFunction(placeable, "getNPCTaskTargetGroup", PlaceableNPCManager.getNPCTaskTargetGroup)
 	SpecializationUtil.registerFunction(placeable, "getPlayerPosition", PlaceableNPCManager.getPlayerPosition)
 	SpecializationUtil.registerFunction(placeable, "getRandomNPCAppearance", PlaceableNPCManager.getRandomNPCAppearance)
@@ -219,10 +226,14 @@ function PlaceableNPCManager:loadNPCTypes(xmlFile, key)
         local appearance = {}
 
         xmlFile:iterate(npcKey .. ".appearance.preset", function(_, genderKey)
+
+            local isUnique = xmlFile:getValue(genderKey .. "#unique", false)
         
             local items = {
                 ["gender"] = xmlFile:getValue(genderKey .. "#gender"),
-                ["unique"] = xmlFile:getValue(genderKey .. "#unique", false),
+                ["unique"] = isUnique,
+                ["firstName"] = isUnique and xmlFile:getValue(genderKey .. "#firstName") or nil,
+                ["lastName"] = isUnique and xmlFile:getValue(genderKey .. "#lastName") or nil,
                 ["available"] = true,
                 ["heads"] = {},
                 ["jackets"] = {},
@@ -339,6 +350,16 @@ function PlaceableNPCManager:saveToXMLFile(xmlFile, key)
     local spec = self[specName]
     local i = 0
 
+    for id, task in pairs(spec.tasks) do
+        if not task.unique or task.valid then continue end
+        local taskKey = string.format("%s.tasks.task(%d)", key, i)
+        xmlFile:setValue(taskKey .. "#id", id)
+        xmlFile:setValue(taskKey .. "#valid", false)
+        i = i + 1
+    end
+
+    i = 0
+
     for _, npc in pairs(spec.npcs) do
         npc:saveToXMLFile(xmlFile, string.format("%s.npcs.npc(%d)", key, i))
         i = i + 1
@@ -352,6 +373,13 @@ function PlaceableNPCManager:loadFromXMLFile(xmlFile, key)
     local spec = self[specName]
 
     local types = spec.types
+    local tasks = spec.tasks
+
+    xmlFile:iterate(key .. ".tasks.task", function(_, taskKey)
+        local task = tasks[xmlFile:getValue(taskKey .. "#id")]
+        if task ~= nil then task.valid = false end
+    end)
+
     spec.npcs = {}
     spec.npcsSorted = {}
 
@@ -452,6 +480,30 @@ function PlaceableNPCManager:getNPCAtTargetLinkedNode(targetName)
 end
 
 
+function PlaceableNPCManager:getClosestNPC(caller, forceSameType)
+
+    local npcs = self[specName].npcs
+    local typeId = caller:getTypeId()
+    local closest
+    local cx, cy, cz = caller:getPosition()
+
+    for _, npc in pairs(npcs) do
+        if npc == caller or npc.path ~= nil or (forceSameType and npc:getTypeId() ~= typeId) then continue end
+        local x, y, z = npc:getPosition()
+        local distance = MathUtil.vector2Length(cx - x, cz - z)
+        if distance < 10 and math.abs(cy - y) < 0.5 and (closest == nil or distance < closest.distance) then
+            closest = {
+                ["distance"] = distance,
+                ["npc"] = npc
+            }
+        end
+    end
+
+    return closest ~= nil and closest.npc or nil
+
+end
+
+
 function PlaceableNPCManager:getNPCTaskTargetGroup(id)
 
     local spec = self[specName]
@@ -464,10 +516,18 @@ end
 
 function PlaceableNPCManager:setNPCTaskIsValid(id, isValid)
 
-    local spec = self[specName]
-    local taskType = spec.tasks[id]
+    local taskType = self[specName].tasks[id]
 
     if taskType.unique then taskType.valid = isValid end
+
+end
+
+
+function PlaceableNPCManager:getNPCTaskIsValid(id)
+
+    local taskType = self[specName].tasks[id]
+
+    return taskType ~= nil and taskType.valid or false
 
 end
 
@@ -491,6 +551,7 @@ function PlaceableNPCManager:createNPCTask(id)
     task:setType(id)
     task:setTargetTime(taskType.maxTime == -1 and -1 or math.random(taskType.minTime, taskType.maxTime))
     task:loadExtraVariablesFromType(taskType)
+    self:setNPCTaskIsValid(id, false)
 
     return task
 
@@ -542,7 +603,7 @@ function PlaceableNPCManager:createNPC(id, spawnGroupName, preset)
     npc.x, npc.y, npc.z = spawn:getNPCSpawnPoint()
 	npc:setAppearance(self:getRandomNPCAppearance(appearance))
     npc:setAppearancePreset(preset)
-	npc:setName(self:getNPCRandomFirstName(npc.gender), self:getNPCRandomLastName())
+	npc:setName(appearance.firstName or self:getNPCRandomFirstName(npc.gender), appearance.lastName or self:getNPCRandomLastName())
     npc:setClass(ClassUtil.getClassName(npcType.class))
 	npc:load()
     npc:setSpawn(spawn)

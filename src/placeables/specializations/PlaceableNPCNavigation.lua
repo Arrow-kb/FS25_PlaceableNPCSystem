@@ -855,9 +855,11 @@ function PlaceableNPCNavigation:findPath(sx, sy, sz, tx, ty, tz)
     }
 
     spec.debugTestPath.path = path
-    table.insert(spec.cache, cache)
 
-    print(string.format("added to cache (%d)", #spec.cache))
+    if PathUtil.getDistanceHeuristic({ ["x"] = sx, ["y"] = sy, ["z"] = sz }, { ["x"] = tx, ["y"] = ty, ["z"] = tz }) > 3 then
+        table.insert(spec.cache, cache)
+        print(string.format("added to cache (%d)", #spec.cache))
+    end
 
     return path
 

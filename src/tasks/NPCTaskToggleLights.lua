@@ -44,14 +44,6 @@ function NPCTaskToggleLights:loadExtraVariablesFromType(type)
 end
 
 
-function NPCTaskToggleLights:setNode(node)
-
-    NPCTaskToggleLights:superClass().setNode(self, node)
-    self:getPlaceable():setNPCTaskIsValid(self.type, false)
-
-end
-
-
 function NPCTaskToggleLights:endTask()
 	
 	local placeable = self:getPlaceable()

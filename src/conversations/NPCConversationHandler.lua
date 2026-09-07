@@ -113,7 +113,6 @@ end
 function NPCConversationHandler:endConversationForBoth()
     self.listener:endConversation()
     self.owner:endConversation()
-    print("=== END CONVERSATION ===")
 end
 
 
@@ -130,7 +129,6 @@ function NPCConversationHandler:replyToConversation(index)
     self.isTalking = true
     self.index = index
     self:setText(section.text)
-    print(string.format("%s (%s): %s", self.owner:getUniqueId(), self.owner:getTypeId(), section.text))
 
     local args = {
         ["placeable"] = self.owner:getPlaceable(),
@@ -146,7 +144,7 @@ end
 
 
 function NPCConversationHandler:setText(text)
-    self.time = math.clamp(utf8Strlen(text) * 150, 2000, 10000)
+    self.time = math.clamp(utf8Strlen(text) * 100, 1500, 6000)
     self.speechBubble:setText(text, self.time)
 end
 
@@ -183,7 +181,7 @@ function NPCConversationHandler:visualiseConversation(info)
     table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "talking = ", ["value"] = self.isTalking })
     table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "listener = ", ["value"] = self.listener:getUniqueId() })
     if self.isTalking then
-        local duration = math.clamp(utf8Strlen(self.conversation[self.index].text) * 150, 2000, 10000) / 1000
+        local duration = math.clamp(utf8Strlen(self.conversation[self.index].text) * 100, 1500, 6000) / 1000
         table.insert(info[#info].content, { ["sizeFactor"] = 0.55, ["name"] = "time = ", ["value"] = string.format("%.2fs/%.2f", math.clamp(duration - self.time / 1000, 0, 10), duration) })
     end
 
