@@ -2,6 +2,8 @@
 
 This is a framework mod designed to be used by other mods, primarily by my Animal Auctions mod. This mod adds a much more dynamic and complex NPC system than the current NPC system, which is limited to engine-controlled pedestrians and static NPCs.
 
+Unfinished but useable.
+
 # Features
 
 ## Overview
