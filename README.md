@@ -4,6 +4,13 @@ This is a framework mod designed to be used by other mods, primarily by my Anima
 
 Unfinished but useable.
 
+Anyone is free to use this mod as a dependancy, but you can also take pieces of my code to use in your own implementations, preferably with credit. If you use this mod as a dependancy for your own placeable, I heavily recommend against using the built-in GIANTs dependancy system, use my own system or one similar to mine instead. The regular FS25 dependancy system is low quality and restrictive.
+
+### AI Disclaimer
+Absolutely no AI was used for LUAU coding whatsoever in this project. The only AI used in this project was:
+1. researching
+2. parts of the python Blender script
+
 # Features
 
 ## Overview
